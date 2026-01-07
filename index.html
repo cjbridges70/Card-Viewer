@@ -60,14 +60,12 @@
   <script type="module">
     import * as THREE from './libs/three.module.js';
 
-    // ----------------- paths (your structure) -----------------
     const PATH_BACK = './assets/pokemon-back.jpg';
     const PRESETS = {
       ray:   './assets/presets/mega-rayquaza-front.JPG',
       blast: './assets/presets/mega-blastoise-front.JPG'
     };
 
-    // ----------------- log/status -----------------
     const logEl = document.getElementById('log');
     const statusEl = document.getElementById('status');
     function log(s){ logEl.textContent += s + "\\n"; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
@@ -80,8 +78,11 @@
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    // BRIGHTER tone mapping
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.55;
+
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -90,16 +91,21 @@
     const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.01, 50);
     camera.position.set(0, 0.06, 1.9);
 
-    // lights (fix “too dark”)
-    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    // lights (brighter)
+    scene.add(new THREE.AmbientLight(0xffffff, 1.10));   // was 0.75
+    const key = new THREE.DirectionalLight(0xffffff, 2.10); // was 1.6
     key.position.set(1.2, 1.6, 1.4);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0x88b6ff, 0.45);
+
+    // camera-fill light (prevents "too dark" at some angles)
+    const camFill = new THREE.DirectionalLight(0xffffff, 0.85);
+    scene.add(camFill);
+
+    const fill = new THREE.DirectionalLight(0x88b6ff, 0.55); // slightly stronger
     fill.position.set(-1.6, 0.2, 0.6);
     scene.add(fill);
 
-    // ----------------- tiny touch/mouse orbit (no OrbitControls needed) -----------------
+    // ----------------- tiny orbit controls -----------------
     const state = {
       target: new THREE.Vector3(0, 0.02, 0),
       yaw: 0.35,
@@ -142,7 +148,10 @@
       const dy = e.clientY - state.lastY;
       state.lastX = e.clientX;
       state.lastY = e.clientY;
-      state.yaw   += dx * 0.007;
+
+      // ✅ FIX: left/right was backwards — invert yaw direction
+      state.yaw   -= dx * 0.007;
+
       state.pitch += dy * 0.007;
       state.pitch = clamp(state.pitch, -1.2, 0.9);
     });
@@ -179,7 +188,7 @@
       updateCamera();
     };
 
-    // ----------------- rounded corners via shader discard (real Pokémon corners) -----------------
+    // ----------------- rounded corners via shader discard -----------------
     const roundedRectGLSL = `
       float roundedMask(vec2 uv, float r){
         vec2 p = uv * 2.0 - 1.0;
@@ -190,7 +199,6 @@
       }
     `;
 
-    // ----------------- materials (fix flip/mirror) -----------------
     const uniforms = {
       uFront:{value:null},
       uBack:{value:null},
@@ -205,7 +213,7 @@
       vertexShader:`
         varying vec2 vUv;
         void main(){
-          vUv = uv; // correct orientation
+          vUv = uv;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
         }
       `,
@@ -214,20 +222,11 @@
         varying vec2 vUv;
         uniform sampler2D uFront;
         uniform float uCorner;
-        uniform float uTime;
         ${roundedRectGLSL}
-
-        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-
         void main(){
           float inside = roundedMask(vUv, uCorner);
           if(inside < 0.5) discard;
-
           vec3 base = texture2D(uFront, vUv).rgb;
-
-          // simple brightening so it’s not “too dark”
-          base = pow(base, vec3(1.0/1.05));
-
           gl_FragColor = vec4(base, 1.0);
         }
       `
@@ -240,8 +239,7 @@
       vertexShader:`
         varying vec2 vUv;
         void main(){
-          // cancel mirroring from 180° rotation:
-          vUv = vec2(1.0 - uv.x, uv.y);
+          vUv = vec2(1.0 - uv.x, uv.y); // cancel mirror
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
         }
       `,
@@ -255,13 +253,11 @@
           float inside = roundedMask(vUv, uCorner);
           if(inside < 0.5) discard;
           vec3 base = texture2D(uBack, vUv).rgb;
-          base = pow(base, vec3(1.0/1.05));
           gl_FragColor = vec4(base, 1.0);
         }
       `
     });
 
-    // card meshes
     const W = 1.0;
     const H = W * (88/63);
     const geo = new THREE.PlaneGeometry(W, H, 1, 1);
@@ -284,7 +280,6 @@
           t.colorSpace = THREE.SRGBColorSpace;
           t.anisotropy = 8;
           t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-          // keep default flipY=true (matches vUv=uv)
           resolve(t);
         }, undefined, ()=>reject(new Error('Failed to load: ' + url)));
       });
@@ -323,32 +318,30 @@
       }catch(err){
         log('✗ ' + err.message);
         status('Error');
-      }finally{
-        // keep URL alive for texture; do not revoke immediately
       }
     });
 
-    // resize
     window.addEventListener('resize', ()=>{
       camera.aspect = window.innerWidth/window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // animate
     const clock = new THREE.Clock();
     function animate(){
       requestAnimationFrame(animate);
+
+      // keep camera fill light aimed with camera
+      camFill.position.copy(camera.position).normalize().multiplyScalar(2.0);
+
       uniforms.uTime.value = clock.getElapsedTime();
       updateCamera();
       renderer.render(scene, camera);
     }
     animate();
 
-    // boot
     status('Loading preset…');
     loadPreset('ray');
-
   </script>
 </body>
 </html>
