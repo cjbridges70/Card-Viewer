@@ -2,16 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Thin + Front Holo + Height/Mask + Presets + Export)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Card Viewer — Extreme Holo + Auto Height</title>
 
   <style>
     :root { color-scheme: dark; }
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
 
+    /* iOS safe areas */
+    :root {
+      --sat: env(safe-area-inset-top);
+      --sar: env(safe-area-inset-right);
+      --sab: env(safe-area-inset-bottom);
+      --sal: env(safe-area-inset-left);
+    }
+
     #ui {
-      position: fixed; top: 12px; left: 12px; z-index: 10;
+      position: fixed;
+      top: calc(12px + var(--sat));
+      left: calc(12px + var(--sal));
+      z-index: 10;
+
       color: #fff;
       background: rgba(0,0,0,.55);
       border: 1px solid rgba(255,255,255,.10);
@@ -19,12 +31,26 @@
       border-radius: 14px;
       backdrop-filter: blur(8px);
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
-      width: min(440px, calc(100vw - 24px));
+
+      width: min(440px, calc(100vw - 24px - var(--sal) - var(--sar)));
+      max-height: calc(100vh - 24px - var(--sat) - var(--sab));
     }
+
     #uiHeader { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
     #uiTitle { display:flex; align-items:center; gap:10px; min-width: 0; }
     #uiTitle .pill { max-width: 260px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #uiBody { margin-top: 10px; display: grid; gap: 10px; }
+
+    #uiBody {
+      margin-top: 10px;
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      padding-right: 4px;
+      /* Header is ~44px + padding; this keeps it visible on small phones */
+      max-height: calc(100vh - 92px - var(--sat) - var(--sab));
+    }
+
     #ui.collapsed #uiBody { display: none; }
 
     .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
@@ -74,7 +100,7 @@
       border: 1px solid rgba(255,255,255,.08);
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 160px;
+      max-height: 120px;
       overflow: auto;
       line-height: 1.25;
     }
@@ -115,11 +141,10 @@
       opacity: .95;
     }
 
-    #hint {
-      display:flex; gap:10px; flex-wrap: wrap; align-items: center;
-    }
+    #hint { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
   </style>
 
+  <!-- Import map for Three.js modules -->
   <script type="importmap">
     {
       "imports": {
@@ -172,41 +197,39 @@
 
       <div class="row">
         <label style="margin:0;">Relief (bump)</label>
-        <input id="bumpSlider" type="range" min="0" max="0.12" step="0.001" value="0.03" />
-      </div>
-
-      <div class="row">
-        <label style="margin:0;">Displacement</label>
-        <input id="dispSlider" type="range" min="0" max="0.08" step="0.001" value="0.03" />
+        <input id="bumpSlider" type="range" min="0" max="0.12" step="0.001" value="0.10" />
       </div>
 
       <div class="row">
         <label style="margin:0;">Holo strength</label>
-        <input id="holoSlider" type="range" min="0" max="1.2" step="0.01" value="0.60" />
+        <input id="holoSlider" type="range" min="0" max="1.2" step="0.01" value="1.05" />
       </div>
 
       <div class="row">
         <label style="margin:0;">Holo reacts to height</label>
-        <input id="holoReliefSlider" type="range" min="0" max="3" step="0.01" value="1.20" />
+        <input id="holoReliefSlider" type="range" min="0" max="3" step="0.01" value="2.40" />
       </div>
 
       <div class="row">
-        <label style="margin:0;">Holo band scale</label>
-        <input id="bandSlider" type="range" min="10" max="180" step="1" value="85" />
+        <label style="margin:0;">Holo band width</label>
+        <!-- 25% of [10..180] ≈ 52 -->
+        <input id="bandSlider" type="range" min="10" max="180" step="1" value="52" />
       </div>
 
       <div class="row">
         <label style="margin:0;">Sparkle</label>
-        <input id="sparkleSlider" type="range" min="0" max="1" step="0.01" value="0.65" />
+        <input id="sparkleSlider" type="range" min="0" max="1" step="0.01" value="1.00" />
       </div>
 
       <div id="hint">
         <span class="pill">Back: assets/pokemon-back.jpg</span>
+        <span class="pill">Displacement: automatic (no slider)</span>
         <span class="pill">Drag rotate • Scroll zoom • Right-drag pan</span>
       </div>
 
       <small>
-        Fixes included: holo film is displaced to match the front mesh (no more “behind the art”). Foil mask supported.
+        Auto-height is tuned to pull out fine “engraved line” texture (closer to your height map example).
+        Height maps (uploaded or generated) get an edge-fade so borders don’t detach.
       </small>
     </div>
   </div>
@@ -214,6 +237,26 @@
   <script type="module">
     import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // ----------------------------
+    // TUNABLE DEFAULTS (extreme)
+    // ----------------------------
+    const DISP_SCALE = 0.060;     // automatic displacement strength (extreme)
+    const FILM_LIFT  = 0.0006;    // keeps holo always above the art
+    const EDGE_FADE_FRAC = 0.035; // 3.5% edge fade on height maps to keep edges pinned (prevents gaps)
+
+    // Auto height (engraving/groove style) tuning
+    const AUTOH = {
+      maxSize: 1024,
+      dogPassSmall: 1,   // small blur passes
+      dogPassLarge: 6,   // large blur passes (bigger = more “line extraction”)
+      dogWeight: 1.15,   // DoG weight (fine texture)
+      edgeWeight: 1.55,  // Sobel edge weight (outlines/text)
+      lineGamma: 0.70,   // <1 boosts more lines
+      t1: 0.08,          // threshold start (lower = more lines)
+      t2: 0.26,          // threshold end
+      grooveBlurPasses: 1 // softens grooves so they displace nicer
+    };
 
     // ---------- Logger ----------
     const statusEl = document.getElementById("status");
@@ -297,7 +340,7 @@
 
       for (let i = 0; i < pos.count; i += 3) {
         const nz = (nor.getZ(i) + nor.getZ(i+1) + nor.getZ(i+2)) / 3;
-        if (Math.abs(nz) > 0.6) continue;
+        if (Math.abs(nz) > 0.6) continue; // remove caps
         for (let k = 0; k < 3; k++) {
           keptPos.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
           keptNor.push(nor.getX(i+k), nor.getY(i+k), nor.getZ(i+k));
@@ -312,7 +355,7 @@
 
     function makeRoundedFaceGeometry() {
       const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-      const g = new THREE.ShapeGeometry(shape, 140); // high tessellation for displacement
+      const g = new THREE.ShapeGeometry(shape, 140);
 
       g.computeBoundingBox();
       const bb = g.boundingBox;
@@ -362,25 +405,25 @@
     defaultFront.anisotropy = 8;
     defaultFront.flipY = false;
 
-    const defaultHeight = new THREE.DataTexture(new Uint8Array([128]), 1, 1, THREE.RedFormat);
+    const defaultHeight = new THREE.DataTexture(new Uint8Array([0]), 1, 1, THREE.RedFormat); // 0 by default (edge-safe)
     defaultHeight.colorSpace = THREE.NoColorSpace;
     defaultHeight.flipY = true;
     defaultHeight.needsUpdate = true;
 
-    const defaultMask = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat);
+    const defaultMask = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat); // fully on
     defaultMask.colorSpace = THREE.NoColorSpace;
     defaultMask.flipY = true;
     defaultMask.needsUpdate = true;
 
     const frontMat = new THREE.MeshStandardMaterial({
       map: defaultFront,
-      roughness: 0.52,
-      metalness: 0.06,
+      roughness: 0.50,
+      metalness: 0.08,
       bumpMap: defaultHeight,
-      bumpScale: 0.03,
+      bumpScale: parseFloat(document.getElementById("bumpSlider").value),
       displacementMap: defaultHeight,
-      displacementScale: 0.03,
-      displacementBias: -0.02
+      displacementScale: DISP_SCALE,
+      displacementBias: 0.0
     });
 
     const backMat = new THREE.MeshStandardMaterial({
@@ -418,7 +461,7 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---------- Holo film (FIXED: displaced in shader to match front displacement) ----------
+    // ---------- Holo film (extreme + height-aware + displaced to match) ----------
     function makeHoloFilmMaterial(heightTex, maskTex) {
       return new THREE.ShaderMaterial({
         transparent: true,
@@ -426,14 +469,14 @@
         blending: THREE.AdditiveBlending,
         uniforms: {
           uTime: { value: 0.0 },
-          uStrength: { value: 0.60 },
+          uStrength: { value: parseFloat(document.getElementById("holoSlider").value) },
           uHeight: { value: heightTex },
           uMask: { value: maskTex },
-          uRelief: { value: 1.20 },
-          uBandScale: { value: 85.0 },
-          uSparkle: { value: 0.65 },
-          uDispScale: { value: 0.03 },
-          uDispBias:  { value: -0.02 }
+          uRelief: { value: parseFloat(document.getElementById("holoReliefSlider").value) },
+          uBandScale: { value: parseFloat(document.getElementById("bandSlider").value) },
+          uSparkle: { value: parseFloat(document.getElementById("sparkleSlider").value) },
+          uDispScale: { value: DISP_SCALE },
+          uFilmLift: { value: FILM_LIFT }
         },
         vertexShader: `
           varying vec2 vUv;
@@ -444,14 +487,14 @@
 
           uniform sampler2D uHeight;
           uniform float uDispScale;
-          uniform float uDispBias;
+          uniform float uFilmLift;
 
           void main() {
             vUv = uv;
-
-            // Displace film to match the front mesh displacement
             float h = texture2D(uHeight, vUv).r;
-            vec3 displaced = position + normal * (h * uDispScale + uDispBias);
+
+            // Match front mesh displacement + tiny lift so it always sits on top
+            vec3 displaced = position + normal * (h * uDispScale + uFilmLift);
 
             vec4 mv = modelViewMatrix * vec4(displaced, 1.0);
             vV = -mv.xyz;
@@ -499,23 +542,35 @@
             float dx = (hX1 - hX0);
             float dy = (hY1 - hY0);
 
+            // Height-aware perturbed normal (very strong)
             vec3 N = normalize(vN + (-dx * uRelief) * vTx + (-dy * uRelief) * vTy);
             vec3 V = normalize(vV);
-            float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
+
+            // Less steep fresnel so it stays visible at more angles (extreme look)
+            float fres = pow(1.0 - max(dot(N, V), 0.0), 1.35);
 
             float bs = uBandScale;
-            float bands = sin(vUv.y*bs + vUv.x*(bs*0.26) + uTime*1.6 + hC*6.0) * 0.5 + 0.5;
-            float diag  = sin(vUv.x*(bs*1.05) + vUv.y*(bs*0.65) + uTime*0.9 + hC*4.0) * 0.5 + 0.5;
 
-            float sp = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2 + hC*2.0));
-            float sparkle = sp * 0.8 * uSparkle;
+            // Wide bands + diagonal + micro-line texture
+            float bands = sin(vUv.y*bs + vUv.x*(bs*0.22) + uTime*1.7 + hC*8.0) * 0.5 + 0.5;
+            float diag  = sin(vUv.x*(bs*1.15) + vUv.y*(bs*0.70) + uTime*1.05 + hC*6.0) * 0.5 + 0.5;
+
+            float micro = sin((vUv.x + vUv.y*0.7) * 950.0 + uTime*0.35 + hC*18.0) * 0.5 + 0.5;
+
+            float sp = step(0.985, hash21(vUv*vec2(1100.0,900.0) + uTime*0.25 + hC*3.0));
+            float sparkle = sp * (1.2 * uSparkle);
 
             vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
-            vec3 film = rainbow*(0.08 + 0.92*fres) + rainbow*(diag*0.07) + sparkle;
 
-            float ridge = smoothstep(0.45, 0.75, hC);
-            float a = clamp((0.10 + 0.9*fres) * uStrength * (0.85 + 0.35*ridge) * mask, 0.0, 1.0);
+            // Very strong film contribution
+            vec3 film = rainbow*(0.22 + 1.55*fres)
+                      + rainbow*(diag*0.18)
+                      + rainbow*(micro*0.10)
+                      + sparkle;
 
+            float ridge = smoothstep(0.25, 0.85, hC);
+
+            float a = clamp((0.20 + 0.80*fres) * uStrength * (0.80 + 0.55*ridge) * mask, 0.0, 1.0);
             gl_FragColor = vec4(film * a, a);
           }
         `
@@ -528,15 +583,13 @@
     frontFilmMat.polygonOffsetUnits = -1;
 
     const frontFilm = new THREE.Mesh(faceGeom, frontFilmMat);
-    frontFilm.position.z = Z_FACE + 0.0002; // FIX: keep film just above face, displacement handles depth
+    frontFilm.position.z = Z_FACE + 0.0002;
     cardGroup.add(frontFilm);
-
-    // Keep shader displacement uniforms synced with material displacement
-    frontFilmMat.uniforms.uDispScale.value = frontMat.displacementScale;
-    frontFilmMat.uniforms.uDispBias.value  = frontMat.displacementBias;
 
     // ---------- Helpers ----------
     let lastFrontImage = null;
+
+    function smoothstep01(t) { return t*t*(3.0 - 2.0*t); }
 
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
@@ -589,6 +642,195 @@
       return tex;
     }
 
+    function drawImageToCanvas(img, maxSize=2048) {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      const s = Math.min(1, maxSize / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * s));
+      const h = Math.max(1, Math.round(h0 * s));
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      return c;
+    }
+
+    // Robust normalize using percentiles (prevents 1-2 hot pixels ruining range)
+    function normalizeCanvasGrayscale(canvas, pLo=0.01, pHi=0.99) {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const { width:w, height:h } = canvas;
+      const im = ctx.getImageData(0, 0, w, h);
+      const d = im.data;
+
+      const hist = new Uint32Array(256);
+      for (let i=0; i<d.length; i+=4) {
+        const v = d[i]; // assume grayscale already, use R
+        hist[v]++;
+      }
+      const total = w*h;
+      const loCount = Math.floor(total * pLo);
+      const hiCount = Math.floor(total * pHi);
+
+      let acc = 0, vLo = 0, vHi = 255;
+      for (let v=0; v<256; v++) { acc += hist[v]; if (acc >= loCount) { vLo = v; break; } }
+      acc = 0;
+      for (let v=0; v<256; v++) { acc += hist[v]; if (acc >= hiCount) { vHi = v; break; } }
+
+      const range = Math.max(1, vHi - vLo);
+      for (let i=0; i<d.length; i+=4) {
+        let v = d[i];
+        v = (v - vLo) * 255 / range;
+        v = Math.max(0, Math.min(255, v));
+        d[i]=d[i+1]=d[i+2]=v;
+        d[i+3]=255;
+      }
+      ctx.putImageData(im, 0, 0);
+      return canvas;
+    }
+
+    // Edge fade to 0 so the border stays pinned and doesn't detach from sides
+    function applyEdgeFadeToCanvas(canvas, edgeFrac=EDGE_FADE_FRAC) {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const { width:w, height:h } = canvas;
+      const im = ctx.getImageData(0, 0, w, h);
+      const d = im.data;
+
+      const fadePx = Math.max(1, Math.round(Math.min(w,h) * edgeFrac));
+
+      for (let y=0; y<h; y++) {
+        for (let x=0; x<w; x++) {
+          const dist = Math.min(x, y, (w-1-x), (h-1-y));
+          const t = Math.max(0, Math.min(1, dist / fadePx));
+          const m = smoothstep01(t);
+          const i = (y*w + x) * 4;
+          const v = d[i] * m;
+          d[i]=d[i+1]=d[i+2]=v;
+          d[i+3]=255;
+        }
+      }
+      ctx.putImageData(im, 0, 0);
+      return canvas;
+    }
+
+    // Convert canvas to grayscale (R=G=B=luma)
+    function toGrayscale(canvas) {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const { width:w, height:h } = canvas;
+      const im = ctx.getImageData(0, 0, w, h);
+      const d = im.data;
+      for (let i=0; i<d.length; i+=4) {
+        const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+        const lum = (0.2126*r + 0.7152*g + 0.0722*b) * 255;
+        d[i]=d[i+1]=d[i+2]=lum;
+        d[i+3]=255;
+      }
+      ctx.putImageData(im, 0, 0);
+      return canvas;
+    }
+
+    // ---- Auto height map: "engraved grooves" style (closer to your example) ----
+    function blur3x3Float(src, w, h) {
+      const out = new Float32Array(src.length);
+      for (let y=0; y<h; y++) for (let x=0; x<w; x++) {
+        let sum = 0, count = 0;
+        for (let oy=-1; oy<=1; oy++) for (let ox=-1; ox<=1; ox++) {
+          const xx=x+ox, yy=y+oy;
+          if (xx<0||xx>=w||yy<0||yy>=h) continue;
+          sum += src[yy*w+xx];
+          count++;
+        }
+        out[y*w+x] = sum / count;
+      }
+      return out;
+    }
+    function blurNFloat(src, w, h, passes) {
+      let cur = src;
+      for (let i=0; i<passes; i++) cur = blur3x3Float(cur, w, h);
+      return cur;
+    }
+    function sobelEdgeFloat(src, w, h) {
+      const out = new Float32Array(src.length);
+      for (let y=1; y<h-1; y++) {
+        for (let x=1; x<w-1; x++) {
+          const i = y*w + x;
+          const gx =
+            -src[i-w-1] -2.0*src[i-1] -src[i+w-1] +
+             src[i-w+1] +2.0*src[i+1] +src[i+w+1];
+          const gy =
+            -src[i-w-1] -2.0*src[i-w] -src[i-w+1] +
+             src[i+w-1] +2.0*src[i+w] +src[i+w+1];
+          out[i] = Math.min(1.0, Math.sqrt(gx*gx + gy*gy));
+        }
+      }
+      return out;
+    }
+    function smoothstep(a, b, x) {
+      const t = Math.max(0, Math.min(1, (x-a)/(b-a)));
+      return t*t*(3 - 2*t);
+    }
+
+    function generateHeightFromImage(img) {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      const s = Math.min(1, AUTOH.maxSize / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * s));
+      const h = Math.max(1, Math.round(h0 * s));
+
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const im = ctx.getImageData(0, 0, w, h);
+      const d = im.data;
+
+      const lum = new Float32Array(w*h);
+      for (let i=0, p=0; p<lum.length; p++, i+=4) {
+        const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+        lum[p] = 0.2126*r + 0.7152*g + 0.0722*b;
+      }
+
+      const small = blurNFloat(lum, w, h, AUTOH.dogPassSmall);
+      const large = blurNFloat(lum, w, h, AUTOH.dogPassLarge);
+
+      const dog = new Float32Array(w*h);
+      for (let i=0; i<dog.length; i++) dog[i] = Math.min(1.0, Math.abs(small[i] - large[i]) * 3.0);
+
+      const edge = sobelEdgeFloat(small, w, h);
+
+      // Build "line signal"
+      const line = new Float32Array(w*h);
+      for (let i=0; i<line.length; i++) {
+        let v = dog[i]*AUTOH.dogWeight + edge[i]*AUTOH.edgeWeight;
+        v = Math.max(0, Math.min(1, v));
+        v = Math.pow(v, AUTOH.lineGamma);
+        line[i] = v;
+      }
+
+      // Convert line signal into "dark grooves on bright base"
+      let grooves = new Float32Array(w*h);
+      for (let i=0; i<grooves.length; i++) grooves[i] = smoothstep(AUTOH.t1, AUTOH.t2, line[i]);
+
+      // Optional soften grooves
+      grooves = blurNFloat(grooves, w, h, AUTOH.grooveBlurPasses);
+
+      const out = ctx.createImageData(w, h);
+      for (let i=0, p=0; p<grooves.length; p++, i+=4) {
+        // White base with darker grooves
+        const height = 1.0 - grooves[p];
+        const v = Math.round(height * 255);
+        out.data[i]=v; out.data[i+1]=v; out.data[i+2]=v; out.data[i+3]=255;
+      }
+      ctx.putImageData(out, 0, 0);
+
+      // Normalize + edge fade to keep borders pinned
+      toGrayscale(c);
+      normalizeCanvasGrayscale(c, 0.02, 0.98);
+      applyEdgeFadeToCanvas(c, EDGE_FADE_FRAC);
+
+      return c;
+    }
+
     function applyFrontTexture(tex, label="Custom front") {
       if (frontMat.map) frontMat.map.dispose();
       frontMat.map = tex;
@@ -597,20 +839,30 @@
       document.getElementById("titlePill").textContent = label;
     }
 
-    function applyHeightTexture(tex) {
+    function applyHeightFromCanvas(canvas) {
+      // Ensure grayscale + robust normalization + edge fade
+      toGrayscale(canvas);
+      normalizeCanvasGrayscale(canvas, 0.02, 0.98);
+      applyEdgeFadeToCanvas(canvas, EDGE_FADE_FRAC);
+
+      const tex = canvasToNoColorTexture(canvas);
+
       if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
       frontMat.bumpMap = tex;
       frontMat.displacementMap = tex;
-
-      frontMat.bumpScale = parseFloat(bumpSlider.value);
-      frontMat.displacementScale = parseFloat(dispSlider.value);
+      frontMat.displacementScale = DISP_SCALE;  // automatic (no slider)
+      frontMat.displacementBias = 0.0;
+      frontMat.bumpScale = parseFloat(document.getElementById("bumpSlider").value);
       frontMat.needsUpdate = true;
 
       frontFilmMat.uniforms.uHeight.value = tex;
+
+      log(`Height applied ✅ (${canvas.width}x${canvas.height})`);
     }
 
     function applyMaskTexture(tex) {
       frontFilmMat.uniforms.uMask.value = tex;
+      log("Foil mask applied ✅");
     }
 
     function clearMaps() {
@@ -624,84 +876,7 @@
       log("Maps cleared ✅");
     }
 
-    // ---------- Auto height generator ----------
-    function generateHeightFromImage(img, maxSize = 1024) {
-      const w0 = img.naturalWidth || img.width;
-      const h0 = img.naturalHeight || img.height;
-      const s = Math.min(1, maxSize / Math.max(w0, h0));
-      const w = Math.max(1, Math.round(w0 * s));
-      const h = Math.max(1, Math.round(h0 * s));
-
-      const c = document.createElement("canvas");
-      c.width = w; c.height = h;
-      const ctx = c.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0, w, h);
-
-      const im = ctx.getImageData(0, 0, w, h);
-      const d = im.data;
-
-      const lum = new Float32Array(w * h);
-      for (let i = 0, p = 0; p < lum.length; p++, i += 4) {
-        const r = d[i] / 255, g = d[i+1] / 255, b = d[i+2] / 255;
-        lum[p] = 0.2126*r + 0.7152*g + 0.0722*b;
-      }
-
-      function blur3x3(src) {
-        const out = new Float32Array(src.length);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            let sum = 0, count = 0;
-            for (let oy = -1; oy <= 1; oy++) {
-              for (let ox = -1; ox <= 1; ox++) {
-                const xx = x + ox, yy = y + oy;
-                if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                sum += src[yy*w + xx];
-                count++;
-              }
-            }
-            out[y*w + x] = sum / count;
-          }
-        }
-        return out;
-      }
-      const base1 = blur3x3(lum);
-      const base = blur3x3(base1);
-
-      const edge = new Float32Array(w * h);
-      for (let y = 1; y < h-1; y++) {
-        for (let x = 1; x < w-1; x++) {
-          const i = y*w + x;
-          const gx =
-            -base[i - w - 1] - 2*base[i - 1] - base[i + w - 1] +
-             base[i - w + 1] + 2*base[i + 1] + base[i + w + 1];
-          const gy =
-            -base[i - w - 1] - 2*base[i - w] - base[i - w + 1] +
-             base[i + w - 1] + 2*base[i + w] + base[i + w + 1];
-          edge[i] = Math.min(1.0, Math.sqrt(gx*gx + gy*gy));
-        }
-      }
-
-      const height = new Float32Array(w * h);
-      let mn = 1e9, mx = -1e9;
-      for (let i = 0; i < height.length; i++) {
-        const v = base[i] * 0.95 + edge[i] * 0.55;
-        height[i] = v;
-        mn = Math.min(mn, v);
-        mx = Math.max(mx, v);
-      }
-      const range = Math.max(1e-6, mx - mn);
-      for (let i = 0; i < height.length; i++) height[i] = (height[i] - mn) / range;
-
-      const out = ctx.createImageData(w, h);
-      for (let i = 0, p = 0; p < height.length; p++, i += 4) {
-        const v = Math.round(height[p] * 255);
-        out.data[i] = v; out.data[i+1] = v; out.data[i+2] = v; out.data[i+3] = 255;
-      }
-      ctx.putImageData(out, 0, 0);
-      return c;
-    }
-
-    // ---------- Auto foil mask generator ----------
+    // ---------- Foil mask generator (unchanged) ----------
     function generateFoilMaskFromImage(img, maxSize = 1024) {
       const w0 = img.naturalWidth || img.width;
       const h0 = img.naturalHeight || img.height;
@@ -755,7 +930,6 @@
 
     // ---------- UI wiring ----------
     const bumpSlider = document.getElementById("bumpSlider");
-    const dispSlider = document.getElementById("dispSlider");
     const holoSlider = document.getElementById("holoSlider");
     const holoReliefSlider = document.getElementById("holoReliefSlider");
     const bandSlider = document.getElementById("bandSlider");
@@ -764,13 +938,6 @@
     bumpSlider.addEventListener("input", () => {
       frontMat.bumpScale = parseFloat(bumpSlider.value);
       frontMat.needsUpdate = true;
-    });
-
-    dispSlider.addEventListener("input", () => {
-      frontMat.displacementScale = parseFloat(dispSlider.value);
-      frontMat.needsUpdate = true;
-      // Sync film displacement too
-      frontFilmMat.uniforms.uDispScale.value = frontMat.displacementScale;
     });
 
     holoSlider.addEventListener("input", () => {
@@ -827,9 +994,9 @@
           img.onload = () => resolve(img);
           img.onerror = () => reject(new Error("Downscaled image decode failed"));
         });
-        const tex = imageToTexture(finalImg, { isData:true });
-        applyHeightTexture(tex);
-        log(`Height applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
+
+        const canvas = drawImageToCanvas(finalImg, 2048);
+        applyHeightFromCanvas(canvas);
       } catch (err) {
         log("Height failed ❌ " + err.message);
         alert("Height failed: " + err.message);
@@ -848,9 +1015,9 @@
           img.onload = () => resolve(img);
           img.onerror = () => reject(new Error("Downscaled image decode failed"));
         });
+
         const tex = imageToTexture(finalImg, { isData:true });
         applyMaskTexture(tex);
-        log(`Mask applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
       } catch (err) {
         log("Mask failed ❌ " + err.message);
         alert("Mask failed: " + err.message);
@@ -859,16 +1026,15 @@
 
     document.getElementById("genHeightBtn").addEventListener("click", () => {
       if (!lastFrontImage) { alert("Upload a front image (or choose a preset) first."); return; }
-      log("Generating height from front…");
-      const c = generateHeightFromImage(lastFrontImage, 1024);
-      const heightTex = canvasToNoColorTexture(c);
-      applyHeightTexture(heightTex);
+      log("Generating height (engraved/grooves)…");
+      const c = generateHeightFromImage(lastFrontImage);
+      applyHeightFromCanvas(c);
       log("Generated height applied ✅");
     });
 
     document.getElementById("genMaskBtn").addEventListener("click", () => {
       if (!lastFrontImage) { alert("Upload a front image (or choose a preset) first."); return; }
-      log("Generating foil mask from front…");
+      log("Generating foil mask…");
       const c = generateFoilMaskFromImage(lastFrontImage, 1024);
       const maskTex = canvasToNoColorTexture(c);
       applyMaskTexture(maskTex);
@@ -895,37 +1061,24 @@
       log("Exported PNG ✅");
     });
 
-    // ---------- Presets ----------
+    // ---------- Presets (Mega Rayquaza + Mega Blastoise) ----------
+    // Put files here (case-sensitive):
+    //  assets/cards/mega-rayquaza-front.jpg
+    //  assets/cards/mega-rayquaza-height.png   (optional)
+    //  assets/cards/mega-rayquaza-mask.png     (optional)
+    //  assets/cards/mega-rayquaza-thumb.jpg    (optional)
+    //
+    //  assets/cards/mega-blastoise-front.jpg
+    //  assets/cards/mega-blastoise-height.png  (optional)
+    //  assets/cards/mega-blastoise-mask.png    (optional)
+    //  assets/cards/mega-blastoise-thumb.jpg   (optional)
     const PRESETS = [
-      { id: "charizard", name: "Charizard (example)", tune: { bump: 0.04, disp: 0.035, holo: 0.65, relief: 1.35, band: 92, sparkle: 0.70 } },
-      { id: "pikachu",   name: "Pikachu (example)",   tune: { bump: 0.03, disp: 0.028, holo: 0.58, relief: 1.10, band: 80, sparkle: 0.55 } },
-      { id: "mewtwo",    name: "Mewtwo (example)",    tune: { bump: 0.05, disp: 0.045, holo: 0.72, relief: 1.60, band: 110, sparkle: 0.80 } }
+      { id: "mega-rayquaza", name: "Mega Rayquaza", tune: { bump: 0.10, holo: 1.08, relief: 2.50, band: 52, sparkle: 1.00 } },
+      { id: "mega-blastoise", name: "Mega Blastoise", tune: { bump: 0.10, holo: 1.05, relief: 2.40, band: 52, sparkle: 1.00 } }
     ];
 
     const presetSelect = document.getElementById("presetSelect");
     const presetThumbs = document.getElementById("presetThumbs");
-
-    function setSlidersFromTune(t) {
-      if (!t) return;
-      if (typeof t.bump === "number") bumpSlider.value = t.bump.toFixed(3);
-      if (typeof t.disp === "number") dispSlider.value = t.disp.toFixed(3);
-      if (typeof t.holo === "number") holoSlider.value = t.holo.toFixed(2);
-      if (typeof t.relief === "number") holoReliefSlider.value = t.relief.toFixed(2);
-      if (typeof t.band === "number") bandSlider.value = String(Math.round(t.band));
-      if (typeof t.sparkle === "number") sparkleSlider.value = t.sparkle.toFixed(2);
-
-      frontMat.bumpScale = parseFloat(bumpSlider.value);
-      frontMat.displacementScale = parseFloat(dispSlider.value);
-      frontFilmMat.uniforms.uStrength.value = parseFloat(holoSlider.value);
-      frontFilmMat.uniforms.uRelief.value = parseFloat(holoReliefSlider.value);
-      frontFilmMat.uniforms.uBandScale.value = parseFloat(bandSlider.value);
-      frontFilmMat.uniforms.uSparkle.value = parseFloat(sparkleSlider.value);
-
-      // keep film displacement synced too
-      frontFilmMat.uniforms.uDispScale.value = frontMat.displacementScale;
-
-      frontMat.needsUpdate = true;
-    }
 
     function presetPaths(id) {
       return {
@@ -934,6 +1087,22 @@
         mask: `./assets/cards/${id}-mask.png`,
         thumb:`./assets/cards/${id}-thumb.jpg`
       };
+    }
+
+    function setFromTune(t) {
+      if (!t) return;
+      if (typeof t.bump === "number") bumpSlider.value = t.bump.toFixed(3);
+      if (typeof t.holo === "number") holoSlider.value = t.holo.toFixed(2);
+      if (typeof t.relief === "number") holoReliefSlider.value = t.relief.toFixed(2);
+      if (typeof t.band === "number") bandSlider.value = String(Math.round(t.band));
+      if (typeof t.sparkle === "number") sparkleSlider.value = t.sparkle.toFixed(2);
+
+      frontMat.bumpScale = parseFloat(bumpSlider.value);
+      frontFilmMat.uniforms.uStrength.value = parseFloat(holoSlider.value);
+      frontFilmMat.uniforms.uRelief.value = parseFloat(holoReliefSlider.value);
+      frontFilmMat.uniforms.uBandScale.value = parseFloat(bandSlider.value);
+      frontFilmMat.uniforms.uSparkle.value = parseFloat(sparkleSlider.value);
+      frontMat.needsUpdate = true;
     }
 
     function loadTexture(path, { isData=false } = {}) {
@@ -952,29 +1121,36 @@
       log(`Loading preset: ${p.name}…`);
       document.getElementById("titlePill").textContent = p.name;
 
-      try {
-        setSlidersFromTune(p.tune);
+      setFromTune(p.tune);
 
+      try {
         const frontTex = await loadTexture(front, { isData:false });
         applyFrontTexture(frontTex, p.name);
         if (frontTex.image) lastFrontImage = frontTex.image;
 
+        // Height: try file first; otherwise auto-generate from front
         try {
           const hTex = await loadTexture(height, { isData:true });
-          applyHeightTexture(hTex);
+          // Convert tex.image into a canvas so we can normalize + edge-fade consistently
+          const c = drawImageToCanvas(hTex.image, 2048);
+          applyHeightFromCanvas(c);
           log("Preset height loaded ✅");
         } catch {
-          log("Preset height not found (OK). Use Generate height if needed.");
-          applyHeightTexture(defaultHeight);
+          log("Preset height not found → generating…");
+          const c = generateHeightFromImage(lastFrontImage);
+          applyHeightFromCanvas(c);
         }
 
+        // Mask: try file first; otherwise auto-generate
         try {
           const mTex = await loadTexture(mask, { isData:true });
           applyMaskTexture(mTex);
           log("Preset mask loaded ✅");
         } catch {
-          applyMaskTexture(defaultMask);
-          log("Preset mask not found (OK).");
+          log("Preset mask not found → generating…");
+          const c = generateFoilMaskFromImage(lastFrontImage, 1024);
+          const mTex = canvasToNoColorTexture(c);
+          applyMaskTexture(mTex);
         }
 
         log(`Preset applied ✅ ${p.name}`);
@@ -984,8 +1160,9 @@
     }
 
     function buildPresetsUI() {
-      presetSelect.innerHTML = `<option value="">— Choose a card —</option>` + PRESETS
-        .map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+      presetSelect.innerHTML =
+        `<option value="">— Choose a card —</option>` +
+        PRESETS.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
 
       presetThumbs.innerHTML = "";
       for (const p of PRESETS) {
