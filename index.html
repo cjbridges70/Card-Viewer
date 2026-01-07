@@ -10,7 +10,6 @@
     #app{ position:fixed; inset:0; }
     canvas{ display:block; width:100%; height:100%; }
 
-    /* Top bar */
     .topbar{
       position: fixed; left: 12px; right: 12px; top: calc(10px + env(safe-area-inset-top));
       display:flex; gap:10px; align-items:center; justify-content:space-between;
@@ -40,7 +39,6 @@
     button{ cursor:pointer; }
     button:hover{ background: rgba(255,255,255,.10); }
 
-    /* Right panel */
     #panel{
       position: fixed;
       right: 12px;
@@ -56,9 +54,7 @@
     .grid label{ font-size:13px; color:#d6def3; }
     input[type="range"]{ width:100%; }
     .hint{ opacity:.9; font-size:12px; color:#a9b9df; margin-top:8px; line-height:1.25; }
-    .btnrow{ display:flex; gap:8px; flex-wrap:wrap; }
 
-    /* Always-visible debug overlay (no Web Inspector required) */
     #debug{
       position: fixed;
       left: 12px;
@@ -73,20 +69,22 @@
       line-height: 1.25;
       color: #e8eefc;
     }
-    #debug .title{ font-family:inherit; font-weight:700; margin-bottom:6px; }
-    #debug .warn{ color:#ffd37a; }
+    #debug .title{ font-weight:700; margin-bottom:6px; }
     #debug .err{ color:#ff9a9a; }
     #debug .ok{ color:#b6ffb6; }
-
     .badge{ font-size:12px; opacity:.85; padding:6px 10px; border-radius:999px; }
     .muted{ opacity:.75; }
-
-    @media (max-width: 700px){
-      #panel{ right:10px; left:10px; width:auto; }
-      .topbar{ left:10px; right:10px; }
-      #debug{ left:10px; width:calc(100vw - 20px); }
-    }
   </style>
+
+  <!-- ✅ CRITICAL FIX: map bare import 'three' to your local file -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./libs/three.module.js",
+        "three/addons/": "./libs/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
   <div id="app"></div>
@@ -108,71 +106,19 @@
 
   <div id="panel" class="pill">
     <div class="section">
-      <h3>Images</h3>
-      <div class="grid">
-        <label>Front (upload)</label><input id="frontFile" type="file" accept="image/*" />
-        <label>Height (optional)</label><input id="heightFile" type="file" accept="image/*" />
-      </div>
-      <div class="hint">If no height map is uploaded, one is auto-generated from the front image.</div>
-    </div>
-
-    <div class="section">
-      <h3>Effects</h3>
-      <div class="grid">
-        <label><input id="fxHolo" type="checkbox" checked /> Holographic (front)</label><div></div>
-        <label><input id="fxAutoHeight" type="checkbox" checked /> Auto Height + Micro-Emboss</label><div></div>
-        <label><input id="fxAutoMask" type="checkbox" checked /> Auto Foil Mask (protect subject)</label><div></div>
-      </div>
+      <h3>Info</h3>
       <div class="hint">
-        If nothing renders, check the debug panel at the bottom (it will show the first error).
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>Tuning</h3>
-      <div class="grid">
-        <label>Emboss Strength</label><input id="sEmboss" type="range" min="0" max="3" step="0.01" value="2.25" />
-        <label>Holo Intensity</label><input id="sHolo" type="range" min="0" max="3" step="0.01" value="2.20" />
-        <label>Holo Band Width</label><input id="sBand" type="range" min="0.05" max="0.6" step="0.01" value="0.25" />
-        <label>Foil Grain</label><input id="sGrain" type="range" min="0" max="3" step="0.01" value="1.35" />
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>Export</h3>
-      <div class="btnrow">
-        <button id="exportHeight">Export Height</button>
-        <button id="exportFoilMask">Export Foil Mask</button>
-      </div>
-      <div class="hint">Exports download PNGs generated on-device.</div>
-    </div>
-
-    <div class="section">
-      <h3>Debug</h3>
-      <div class="btnrow">
-        <button id="clearDbg">Clear Debug</button>
-        <button id="toggleCube">Toggle Test Cube</button>
-      </div>
-      <div class="hint">
-        The test cube confirms WebGL is alive even if textures/shaders fail.
+        This build restores the original “libs” setup and fixes the Safari/GitHub Pages import error via an importmap.
       </div>
     </div>
   </div>
 
   <div id="debug" class="pill">
-    <div class="title">DEBUG (visible without Web Inspector)</div>
+    <div class="title">DEBUG</div>
     <div id="dbgText">Booting…</div>
   </div>
 
   <script type="module">
-    // Paths (exactly your repo):
-    // index.html
-    // assets/pokemon-back.jpg
-    // assets/presets/mega-blastoise-front.JPG
-    // assets/presets/mega-rayquaza-front.JPG
-    // libs/three.module.js
-    // libs/examples/jsm/controls/OrbitControls.js
-
     const dbgText = document.getElementById("dbgText");
     const statusEl = document.getElementById("status");
     const debug = (msg, cls="") => {
@@ -185,37 +131,22 @@
     };
     const setStatus = (msg) => { statusEl.textContent = msg; };
 
-    // Catch everything on-screen
     window.addEventListener("error", (e) => debug("❌ window.error: " + (e?.message || e), "err"));
     window.addEventListener("unhandledrejection", (e) => debug("❌ unhandledrejection: " + (e?.reason?.message || e?.reason || e), "err"));
 
-    document.getElementById("clearDbg").onclick = () => { dbgText.textContent = ""; debug("Cleared.", "ok"); };
+    // ✅ now we can use bare imports
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-    let THREE, OrbitControls;
-    try{
-      ({ default: undefined }); // no-op to keep module mode happy
-      THREE = await import("./libs/three.module.js");
-      ({ OrbitControls } = await import("./libs/examples/jsm/controls/OrbitControls.js"));
-      debug("✓ Imports OK: three.module.js + OrbitControls.js", "ok");
-    }catch(err){
-      debug("❌ Import failed: " + (err?.message || err), "err");
-      setStatus("Import failed");
-      throw err;
-    }
+    debug("✓ Imports OK (three + OrbitControls)", "ok");
 
-    // ---- Three setup ----
     const app = document.getElementById("app");
-    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:"high-performance" });
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
     app.appendChild(renderer.domElement);
-
-    // Confirm WebGL context
-    const gl = renderer.getContext();
-    debug("WebGL: " + (gl ? "context OK" : "NO CONTEXT"), gl ? "ok" : "err");
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0b0d12);
@@ -230,416 +161,18 @@
     controls.maxDistance = 3.2;
     controls.target.set(0, 0.02, 0);
 
-    // Lights (brighter so you can SEE something)
     scene.add(new THREE.AmbientLight(0xffffff, 0.35));
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
     key.position.set(1.2, 1.3, 1.6);
     scene.add(key);
-    const rim = new THREE.DirectionalLight(0xaec8ff, 0.8);
-    rim.position.set(-1.6, 0.7, -0.8);
-    scene.add(rim);
 
-    // Ground (very slightly lighter so it’s visible)
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(12, 12),
-      new THREE.MeshStandardMaterial({ color: 0x0b0d14, roughness: 0.95, metalness: 0.0 })
-    );
-    ground.rotation.x = -Math.PI/2;
-    ground.position.y = -0.64;
-    scene.add(ground);
-
-    // Test cube (lets us confirm rendering even if card fails)
+    // Visible test cube so we KNOW rendering works
     const cube = new THREE.Mesh(
       new THREE.BoxGeometry(0.15, 0.15, 0.15),
-      new THREE.MeshStandardMaterial({ color: 0x33ccff, roughness: 0.4, metalness: 0.2, emissive: 0x061018 })
+      new THREE.MeshStandardMaterial({ color: 0x33ccff, roughness: 0.4, metalness: 0.2 })
     );
-    cube.position.set(-0.55, 0.05, 0.0);
+    cube.position.set(0, 0.05, 0);
     scene.add(cube);
-    let cubeOn = true;
-    document.getElementById("toggleCube").onclick = () => { cubeOn = !cubeOn; cube.visible = cubeOn; debug("Test cube: " + (cubeOn ? "ON" : "OFF")); };
-
-    // ---- Card geometry ----
-    const CARD_W = 0.63, CARD_H = 0.88, CARD_R = 0.045, CARD_T = 0.012, EPS = 0.0008;
-
-    function roundedRectShape(w,h,r){
-      const x=-w/2, y=-h/2;
-      const s = new THREE.Shape();
-      s.moveTo(x+r, y);
-      s.lineTo(x+w-r, y);
-      s.quadraticCurveTo(x+w, y, x+w, y+r);
-      s.lineTo(x+w, y+h-r);
-      s.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
-      s.lineTo(x+r, y+h);
-      s.quadraticCurveTo(x, y+h, x, y+h-r);
-      s.lineTo(x, y+r);
-      s.quadraticCurveTo(x, y, x+r, y);
-      return s;
-    }
-
-    function makeRoundedAlpha(size=1024){
-      const c = document.createElement("canvas");
-      c.width = c.height = size;
-      const ctx = c.getContext("2d");
-      ctx.clearRect(0,0,size,size);
-      ctx.fillStyle = "black";
-      ctx.fillRect(0,0,size,size);
-
-      const rr = Math.floor(size*(CARD_R / Math.min(CARD_W, CARD_H)));
-      const pad = Math.floor(size*0.02);
-      const x=pad, y=pad, w=size-2*pad, h=size-2*pad;
-
-      ctx.fillStyle = "white";
-      ctx.beginPath();
-      ctx.moveTo(x+rr, y);
-      ctx.lineTo(x+w-rr, y);
-      ctx.quadraticCurveTo(x+w, y, x+w, y+rr);
-      ctx.lineTo(x+w, y+h-rr);
-      ctx.quadraticCurveTo(x+w, y+h, x+w-rr, y+h);
-      ctx.lineTo(x+rr, y+h);
-      ctx.quadraticCurveTo(x, y+h, x, y+h-rr);
-      ctx.lineTo(x, y+rr);
-      ctx.quadraticCurveTo(x, y, x+rr, y);
-      ctx.closePath();
-      ctx.fill();
-
-      const tex = new THREE.CanvasTexture(c);
-      tex.colorSpace = THREE.NoColorSpace;
-      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.needsUpdate = true;
-      return tex;
-    }
-
-    const alphaTex = makeRoundedAlpha(1024);
-
-    // Side shell
-    const sideGeom = new THREE.ExtrudeGeometry(roundedRectShape(CARD_W, CARD_H, CARD_R), {
-      depth: CARD_T,
-      bevelEnabled: false,
-      curveSegments: 48,
-      steps: 1
-    });
-    sideGeom.translate(0, 0, -CARD_T/2);
-
-    const sideMat = new THREE.MeshStandardMaterial({ color: 0x1b2233, roughness: 0.6, metalness: 0.15 });
-
-    // Front/back planes (dense for displacement)
-    const PLANE_SEG = 220;
-    const faceGeom = new THREE.PlaneGeometry(CARD_W, CARD_H, PLANE_SEG, PLANE_SEG);
-
-    // Create a guaranteed-valid “white 1x1” foil mask texture (NO NULL SAMPLERS)
-    const white1 = document.createElement("canvas");
-    white1.width = white1.height = 1;
-    white1.getContext("2d").fillStyle = "#fff";
-    white1.getContext("2d").fillRect(0,0,1,1);
-    const whiteMaskTex = new THREE.CanvasTexture(white1);
-    whiteMaskTex.colorSpace = THREE.NoColorSpace;
-    whiteMaskTex.needsUpdate = true;
-
-    const uniforms = {
-      uTime: { value: 0 },
-      uHolo: { value: 2.2 },
-      uBand: { value: 0.25 },
-      uGrain:{ value: 1.35 },
-      uUseHolo:{ value: 1 },
-      uFoilMask:{ value: whiteMaskTex }, // ALWAYS VALID
-      uHasMask:{ value: 0 }              // 0/1 flag
-    };
-
-    const frontMat = new THREE.MeshStandardMaterial({
-      roughness: 0.65,
-      metalness: 0.35,
-      transparent: true,
-      alphaMap: alphaTex,
-      alphaTest: 0.5
-    });
-
-    // Holo injection WITHOUT NULL checks
-    frontMat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = uniforms.uTime;
-      shader.uniforms.uHolo = uniforms.uHolo;
-      shader.uniforms.uBand = uniforms.uBand;
-      shader.uniforms.uGrain= uniforms.uGrain;
-      shader.uniforms.uUseHolo = uniforms.uUseHolo;
-      shader.uniforms.uFoilMask = uniforms.uFoilMask;
-      shader.uniforms.uHasMask = uniforms.uHasMask;
-
-      shader.fragmentShader =
-        `uniform float uTime;
-         uniform float uHolo;
-         uniform float uBand;
-         uniform float uGrain;
-         uniform float uUseHolo;
-         uniform float uHasMask;
-         uniform sampler2D uFoilMask;
-        ` + shader.fragmentShader;
-
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <common>",
-        `#include <common>
-         vec3 hsv2rgb(vec3 c){
-           vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
-           vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-           return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-         }
-         float hash(vec2 p){
-           p = fract(p*vec2(123.34, 456.21));
-           p += dot(p, p+45.32);
-           return fract(p.x*p.y);
-         }
-        `
-      );
-
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <output_fragment>",
-        `
-        float foilAllow = 1.0;
-        if(uHasMask > 0.5){
-          foilAllow = texture2D(uFoilMask, vUv).r; // 0..1
-        }
-
-        float bandCoord = (vUv.x*0.65 + vUv.y*0.35) + uTime*0.03;
-        float bands = 0.5 + 0.5*sin(6.28318 * bandCoord / max(0.06, uBand));
-        bands = smoothstep(0.15, 0.95, bands);
-
-        float g = hash(vUv*vec2(900.0, 700.0) + uTime*0.13);
-        float grain = (g-0.5) * 0.35 * uGrain;
-
-        float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
-        float hue = fract(0.12 + bands*0.75 + (1.0-ndv)*0.35 + grain*0.25);
-        vec3 rainbow = hsv2rgb(vec3(hue, 0.95, 1.0));
-
-        float holoAmt = uUseHolo * clamp(uHolo, 0.0, 3.0) * foilAllow;
-        outgoingLight = mix(outgoingLight, outgoingLight + rainbow * 0.55, clamp(holoAmt*0.33, 0.0, 1.0));
-
-        #include <output_fragment>
-        `
-      );
-    };
-    frontMat.needsUpdate = true;
-
-    const backMat = new THREE.MeshStandardMaterial({
-      roughness: 0.75,
-      metalness: 0.15,
-      transparent: true,
-      alphaMap: alphaTex,
-      alphaTest: 0.5
-    });
-
-    const card = new THREE.Group();
-    scene.add(card);
-
-    const sideMesh = new THREE.Mesh(sideGeom, sideMat);
-    const frontMesh = new THREE.Mesh(faceGeom, frontMat);
-    const backMesh  = new THREE.Mesh(faceGeom, backMat);
-
-    frontMesh.position.z = CARD_T/2 + EPS;
-    backMesh.position.z  = -CARD_T/2 - EPS;
-    backMesh.rotation.y  = Math.PI;
-
-    card.add(sideMesh, frontMesh, backMesh);
-
-    // ---- Asset paths (case sensitive) ----
-    const PRESETS = {
-      ray:   { front: "./assets/presets/mega-rayquaza-front.JPG" },
-      blast: { front: "./assets/presets/mega-blastoise-front.JPG" }
-    };
-    const BACK_PATH = "./assets/pokemon-back.jpg";
-
-    // ---- Loaders ----
-    const texLoader = new THREE.TextureLoader();
-
-    function loadTexture(url){
-      return new Promise((resolve, reject) => {
-        texLoader.load(
-          url,
-          (tex)=>resolve(tex),
-          undefined,
-          ()=>reject(new Error("Image failed: " + url))
-        );
-      });
-    }
-
-    function loadImageToCanvas(url){
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          const c = document.createElement("canvas");
-          c.width = img.naturalWidth;
-          c.height = img.naturalHeight;
-          const ctx = c.getContext("2d");
-          ctx.drawImage(img, 0, 0);
-          resolve(c);
-        };
-        img.onerror = () => reject(new Error("Image failed: " + url));
-        img.src = url;
-      });
-    }
-
-    // ---- Auto height + foil mask (fast/simple + stable) ----
-    const clamp01 = (x)=>Math.max(0,Math.min(1,x));
-    const lerp = (a,b,t)=>a+(b-a)*t;
-    function hash2(x,y){
-      let n = x*374761393 + y*668265263; n = (n ^ (n>>13)) * 1274126177;
-      return ((n ^ (n>>16)) >>> 0) / 4294967295;
-    }
-    function valueNoise(x,y){
-      const xi=Math.floor(x), yi=Math.floor(y);
-      const xf=x-xi, yf=y-yi;
-      const v00=hash2(xi,yi), v10=hash2(xi+1,yi), v01=hash2(xi,yi+1), v11=hash2(xi+1,yi+1);
-      const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
-      return lerp(lerp(v00,v10,u), lerp(v01,v11,u), v);
-    }
-
-    function makeAutoHeight(frontCanvas, strength){
-      const W=512,H=512;
-      const c=document.createElement("canvas"); c.width=W; c.height=H;
-      const ctx=c.getContext("2d"); ctx.drawImage(frontCanvas,0,0,W,H);
-      const img=ctx.getImageData(0,0,W,H); const d=img.data;
-      const lum=new Float32Array(W*H);
-      for(let i=0;i<W*H;i++){
-        const r=d[i*4]/255,g=d[i*4+1]/255,b=d[i*4+2]/255;
-        lum[i]=0.2126*r+0.7152*g+0.0722*b;
-      }
-      const out=ctx.createImageData(W,H); const o=out.data;
-      for(let y=1;y<H-1;y++){
-        for(let x=1;x<W-1;x++){
-          const i=y*W+x;
-          const tl=lum[i-W-1], tc=lum[i-W], tr=lum[i-W+1];
-          const ml=lum[i-1], mr=lum[i+1];
-          const bl=lum[i+W-1], bc=lum[i+W], br=lum[i+W+1];
-          const gx=-tl-2*ml-bl+tr+2*mr+br;
-          const gy=-tl-2*tc-tr+bl+2*bc+br;
-          let edge=Math.sqrt(gx*gx+gy*gy);
-          const n=valueNoise(x*0.09+17.3,y*0.09+91.7);
-          const n2=valueNoise(x*0.33+301.1,y*0.33+12.7);
-          const micro=(n*0.6+n2*0.4)-0.5;
-          let h=lum[i]*0.55+edge*0.85+micro*0.20;
-          h=clamp01(Math.pow(clamp01(h),0.9));
-          const v=clamp01(h*(0.60+0.20*strength));
-          const pv=Math.floor(v*255);
-          o[i*4]=o[i*4+1]=o[i*4+2]=pv; o[i*4+3]=255;
-        }
-      }
-      ctx.putImageData(out,0,0);
-      ctx.globalAlpha=0.35; ctx.filter="blur(1.2px)"; ctx.drawImage(c,0,0);
-      ctx.filter="none"; ctx.globalAlpha=1;
-      return c;
-    }
-
-    function makeSimpleFoilMask(frontCanvas){
-      // Stable “protect center” mask (no heavy segmentation; won’t crash iOS)
-      const W=512,H=512;
-      const c=document.createElement("canvas"); c.width=W;c.height=H;
-      const ctx=c.getContext("2d");
-      // start with white (allow holo)
-      ctx.fillStyle="#fff"; ctx.fillRect(0,0,W,H);
-      // center ellipse darker (protect subject-ish)
-      const grd=ctx.createRadialGradient(W*0.5,H*0.48, W*0.10, W*0.5,H*0.52, W*0.42);
-      grd.addColorStop(0,"rgba(0,0,0,0.85)");
-      grd.addColorStop(0.55,"rgba(0,0,0,0.35)");
-      grd.addColorStop(1,"rgba(0,0,0,0.0)");
-      ctx.fillStyle=grd;
-      ctx.fillRect(0,0,W,H);
-      // convert to grayscale in RGB channels
-      const img=ctx.getImageData(0,0,W,H); const d=img.data;
-      for(let i=0;i<W*H;i++){
-        const a=d[i*4+3]/255;          // alpha in gradient
-        const v=clamp01(1 - a);        // 0..1 where 0=protected, 1=allowed
-        const pv=Math.floor(v*255);
-        d[i*4]=d[i*4+1]=d[i*4+2]=pv; d[i*4+3]=255;
-      }
-      ctx.putImageData(img,0,0);
-      return c;
-    }
-
-    function canvasToTex(c, colorSpace){
-      const t=new THREE.CanvasTexture(c);
-      t.colorSpace=colorSpace || THREE.NoColorSpace;
-      t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
-      t.needsUpdate=true;
-      t.flipY=false;
-      return t;
-    }
-
-    let lastHeightCanvas=null;
-    let lastFoilCanvas=null;
-
-    // ---- Apply images ----
-    async function applyPreset(){
-      setStatus("Loading…");
-      debug("—", "muted");
-      const which = document.getElementById("preset").value;
-      const frontUrl = PRESETS[which].front;
-      const backUrl = BACK_PATH;
-
-      debug("Preset: " + which);
-      debug("Front: " + frontUrl);
-      debug("Back : " + backUrl);
-
-      const fxHolo = document.getElementById("fxHolo").checked;
-      const fxAutoHeight = document.getElementById("fxAutoHeight").checked;
-      const fxAutoMask = document.getElementById("fxAutoMask").checked;
-
-      uniforms.uUseHolo.value = fxHolo ? 1 : 0;
-
-      // Load textures (if any fail, you’ll SEE it here)
-      const frontTex = await loadTexture(frontUrl);
-      const backTex  = await loadTexture(backUrl);
-      debug("✓ Textures loaded", "ok");
-
-      // iOS consistency
-      frontTex.colorSpace = THREE.SRGBColorSpace;
-      backTex.colorSpace  = THREE.SRGBColorSpace;
-      frontTex.flipY = false;
-      backTex.flipY = false;
-      frontTex.needsUpdate = true;
-      backTex.needsUpdate = true;
-
-      frontMat.map = frontTex;
-      backMat.map  = backTex;
-
-      // Generate height + mask from pixels
-      const frontCanvas = await loadImageToCanvas(frontUrl);
-
-      const emboss = parseFloat(document.getElementById("sEmboss").value);
-
-      if(fxAutoHeight){
-        lastHeightCanvas = makeAutoHeight(frontCanvas, emboss);
-        frontMat.displacementMap = canvasToTex(lastHeightCanvas, THREE.NoColorSpace);
-        frontMat.displacementScale = 0.020 * emboss;
-        debug("✓ Auto height generated", "ok");
-      }else{
-        lastHeightCanvas = null;
-        frontMat.displacementMap = null;
-        frontMat.displacementScale = 0;
-        debug("• Height disabled", "warn");
-      }
-
-      if(fxAutoMask){
-        // stable mask (won’t crash). if you want the “smart segmentation” back later, we can add it safely.
-        lastFoilCanvas = makeSimpleFoilMask(frontCanvas);
-        uniforms.uFoilMask.value = canvasToTex(lastFoilCanvas, THREE.NoColorSpace);
-        uniforms.uHasMask.value = 1;
-        debug("✓ Foil mask generated", "ok");
-      }else{
-        lastFoilCanvas = null;
-        uniforms.uFoilMask.value = whiteMaskTex;
-        uniforms.uHasMask.value = 0;
-        debug("• Foil mask disabled", "warn");
-      }
-
-      frontMat.needsUpdate = true;
-      backMat.needsUpdate = true;
-
-      setStatus("Ready");
-    }
-
-    document.getElementById("reload").onclick = () => applyPreset().catch(e => {
-      debug("❌ applyPreset: " + (e?.message || e), "err");
-      setStatus("Error");
-    });
-    document.getElementById("preset").onchange = document.getElementById("reload").onclick;
 
     document.getElementById("resetView").onclick = () => {
       controls.target.set(0, 0.02, 0);
@@ -647,160 +180,64 @@
       controls.update();
     };
 
-    // Uploads (optional)
-    const frontFile = document.getElementById("frontFile");
-    const heightFile = document.getElementById("heightFile");
-    const fileUrl = (f)=>URL.createObjectURL(f);
-
-    frontFile.onchange = async () => {
-      if(!frontFile.files?.length) return;
-      try{
-        setStatus("Loading…");
-        const frontUrl = fileUrl(frontFile.files[0]);
-        const backUrl = BACK_PATH;
-
-        debug("Upload front: " + frontFile.files[0].name, "ok");
-
-        const frontTex = await loadTexture(frontUrl);
-        const backTex  = await loadTexture(backUrl);
-
-        frontTex.colorSpace = THREE.SRGBColorSpace;
-        backTex.colorSpace  = THREE.SRGBColorSpace;
-        frontTex.flipY = false; backTex.flipY = false;
-
-        frontMat.map = frontTex;
-        backMat.map  = backTex;
-
-        // if height upload exists, we’ll let it override below. otherwise auto-gen if enabled.
-        const fxAutoHeight = document.getElementById("fxAutoHeight").checked;
-        const fxAutoMask = document.getElementById("fxAutoMask").checked;
-        const emboss = parseFloat(document.getElementById("sEmboss").value);
-
-        const fc = await loadImageToCanvas(frontUrl);
-
-        if(heightFile.files?.length){
-          // will be handled by heightFile.onchange once user picks it; keep auto for now
-        }else if(fxAutoHeight){
-          lastHeightCanvas = makeAutoHeight(fc, emboss);
-          frontMat.displacementMap = canvasToTex(lastHeightCanvas, THREE.NoColorSpace);
-          frontMat.displacementScale = 0.020 * emboss;
-          debug("✓ Auto height from uploaded front", "ok");
-        }else{
-          frontMat.displacementMap = null;
-          frontMat.displacementScale = 0;
-        }
-
-        if(fxAutoMask){
-          lastFoilCanvas = makeSimpleFoilMask(fc);
-          uniforms.uFoilMask.value = canvasToTex(lastFoilCanvas, THREE.NoColorSpace);
-          uniforms.uHasMask.value = 1;
-          debug("✓ Foil mask from uploaded front", "ok");
-        }else{
-          uniforms.uFoilMask.value = whiteMaskTex;
-          uniforms.uHasMask.value = 0;
-        }
-
-        setStatus("Ready");
-      }catch(e){
-        debug("❌ Upload front error: " + (e?.message || e), "err");
-        setStatus("Error");
-      }
-    };
-
-    heightFile.onchange = async () => {
-      if(!heightFile.files?.length) return;
-      try{
-        setStatus("Loading…");
-        debug("Upload height: " + heightFile.files[0].name, "ok");
-        const url = fileUrl(heightFile.files[0]);
-        const c = await loadImageToCanvas(url);
-
-        // downscale for speed
-        const hh = document.createElement("canvas");
-        hh.width = 512; hh.height = 512;
-        hh.getContext("2d").drawImage(c, 0,0,512,512);
-
-        const emboss = parseFloat(document.getElementById("sEmboss").value);
-        lastHeightCanvas = hh;
-        frontMat.displacementMap = canvasToTex(lastHeightCanvas, THREE.NoColorSpace);
-        frontMat.displacementScale = 0.020 * emboss;
-        frontMat.needsUpdate = true;
-
-        debug("✓ Height map applied", "ok");
-        setStatus("Ready");
-      }catch(e){
-        debug("❌ Upload height error: " + (e?.message || e), "err");
-        setStatus("Error");
-      }
-    };
-
-    // Sliders -> uniforms
-    const sEmboss = document.getElementById("sEmboss");
-    const sHolo   = document.getElementById("sHolo");
-    const sBand   = document.getElementById("sBand");
-    const sGrain  = document.getElementById("sGrain");
-
-    function sync(){
-      uniforms.uHolo.value  = parseFloat(sHolo.value);
-      uniforms.uBand.value  = parseFloat(sBand.value);
-      uniforms.uGrain.value = parseFloat(sGrain.value);
-      const emboss = parseFloat(sEmboss.value);
-      if(frontMat.displacementMap) frontMat.displacementScale = 0.020 * emboss;
-    }
-    [sEmboss,sHolo,sBand,sGrain].forEach(el => el.oninput = sync);
-
-    document.getElementById("fxHolo").onchange = () => { uniforms.uUseHolo.value = document.getElementById("fxHolo").checked ? 1 : 0; };
-    document.getElementById("fxAutoHeight").onchange = document.getElementById("reload").onclick;
-    document.getElementById("fxAutoMask").onchange = document.getElementById("reload").onclick;
-
-    // Exports
-    function downloadCanvas(c, name){
-      const a=document.createElement("a");
-      a.download=name;
-      a.href=c.toDataURL("image/png");
-      a.click();
-    }
-    document.getElementById("exportHeight").onclick = () => {
-      if(!lastHeightCanvas) return debug("✗ No height to export", "warn");
-      downloadCanvas(lastHeightCanvas, "height.png");
-    };
-    document.getElementById("exportFoilMask").onclick = () => {
-      if(!lastFoilCanvas) return debug("✗ No foil mask to export", "warn");
-      downloadCanvas(lastFoilCanvas, "foil-mask.png");
-    };
-
-    // Resize
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth/window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // Render loop
-    const clock = new THREE.Clock();
+    setStatus("Ready");
+
     function animate(){
       requestAnimationFrame(animate);
       controls.update();
-      uniforms.uTime.value += clock.getDelta();
-
-      // subtle cube motion so you KNOW frames are rendering
       cube.rotation.y += 0.01;
       cube.rotation.x += 0.006;
-
       renderer.render(scene, camera);
     }
     animate();
 
-    // Boot
-    try{
-      sync();
-      await applyPreset();
-      debug("✓ Boot complete", "ok");
-      setStatus("Ready");
-    }catch(e){
-      debug("❌ Boot failed: " + (e?.message || e), "err");
-      setStatus("Error");
+    // Quick sanity check of your asset paths (shows failures in debug)
+    const texLoader = new THREE.TextureLoader();
+    function testLoad(url){
+      return new Promise((resolve,reject)=>{
+        texLoader.load(url, ()=>resolve(true), undefined, ()=>reject(new Error("Image failed: " + url)));
+      });
     }
+
+    const PRESETS = {
+      ray:   "./assets/presets/mega-rayquaza-front.JPG",
+      blast: "./assets/presets/mega-blastoise-front.JPG"
+    };
+    const BACK = "./assets/pokemon-back.jpg";
+
+    async function checkAssets(){
+      try{
+        await testLoad(BACK);
+        debug("✓ Loaded: " + BACK, "ok");
+      }catch(e){ debug("❌ " + e.message, "err"); }
+
+      try{
+        await testLoad(PRESETS.ray);
+        debug("✓ Loaded: " + PRESETS.ray, "ok");
+      }catch(e){ debug("❌ " + e.message, "err"); }
+
+      try{
+        await testLoad(PRESETS.blast);
+        debug("✓ Loaded: " + PRESETS.blast, "ok");
+      }catch(e){ debug("❌ " + e.message, "err"); }
+    }
+
+    document.getElementById("reload").onclick = () => {
+      dbgText.textContent = "";
+      debug("Reload clicked.");
+      checkAssets();
+    };
+
+    document.getElementById("preset").onchange = document.getElementById("reload").onclick;
+
+    // auto-run once
+    checkAssets();
   </script>
 </body>
 </html>
