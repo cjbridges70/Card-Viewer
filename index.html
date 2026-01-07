@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Card Viewer (Studio + Holo + Height/Emboss)</title>
+  <title>Card Viewer (Studio + Holo + Height + Auto Mask)</title>
   <style>
     html,body{height:100%;margin:0;overflow:hidden;background:#0b0e12;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     #hud{
@@ -24,7 +24,7 @@
     button{cursor:pointer}
     #status{margin-left:auto;opacity:.9}
     #log{
-      position:fixed;left:12px;bottom:12px;width:min(820px,calc(100% - 24px));
+      position:fixed;left:12px;bottom:12px;width:min(900px,calc(100% - 24px));
       max-height:35vh;overflow:auto;white-space:pre-wrap;
       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.25;
       color:#e7eefc;background:rgba(9,12,16,.72);border:1px solid rgba(255,255,255,.10);
@@ -53,12 +53,14 @@
     <div class="pill">
       <label><span class="small">Front</span><input id="frontFile" type="file" accept="image/*"></label>
       <label><span class="small">Height</span><input id="heightFile" type="file" accept="image/*"></label>
+      <label><span class="small">Mask</span><input id="maskFile" type="file" accept="image/*"></label>
     </div>
 
     <div class="pill">
       <label><input id="useHolo" type="checkbox" checked><span class="small">Holo (front)</span></label>
       <label><input id="useEmboss" type="checkbox" checked><span class="small">Emboss</span></label>
       <label><input id="useAutoHeight" type="checkbox" checked><span class="small">Auto-height</span></label>
+      <label><input id="useAutoMask" type="checkbox" checked><span class="small">Auto-mask Pokémon</span></label>
     </div>
 
     <div id="status" class="pill">Booting…</div>
@@ -86,9 +88,11 @@
       toggleLog: document.getElementById('toggleLog'),
       frontFile: document.getElementById('frontFile'),
       heightFile: document.getElementById('heightFile'),
+      maskFile: document.getElementById('maskFile'),
       useHolo: document.getElementById('useHolo'),
       useEmboss: document.getElementById('useEmboss'),
-      useAutoHeight: document.getElementById('useAutoHeight')
+      useAutoHeight: document.getElementById('useAutoHeight'),
+      useAutoMask: document.getElementById('useAutoMask'),
     };
 
     function log(s){ logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
@@ -194,7 +198,7 @@
       updateCamera();
     };
 
-    // ---------------- helpers: image->canvas, canvas->texture ----------------
+    // ---------------- helpers: image->canvas, scaling, canvas->texture ----------------
     async function loadImageToCanvas(source) {
       const img = await new Promise((resolve, reject) => {
         const im = new Image();
@@ -212,6 +216,21 @@
       return c;
     }
 
+    function scaleCanvasMax(src, maxDim){
+      const w = src.width, h = src.height;
+      const m = Math.max(w,h);
+      if(m <= maxDim) return src;
+      const s = maxDim / m;
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w*s));
+      c.height = Math.max(1, Math.round(h*s));
+      const ctx = c.getContext('2d', { willReadFrequently:true });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(src, 0, 0, c.width, c.height);
+      return c;
+    }
+
     function canvasToTexture(c, {srgb=false}={}) {
       const t = new THREE.CanvasTexture(c);
       t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
@@ -221,54 +240,104 @@
       return t;
     }
 
-    // Auto-height: broad structure + edge emphasis + micro grain (non-tiling-ish)
+    // ---------------- unique, non-tiling, image-guided auto height ----------------
+    // Goal: texture that "follows" the background instead of random tiling.
     function makeAutoHeight(srcCanvas) {
-      const w = srcCanvas.width, h = srcCanvas.height;
-      const sctx = srcCanvas.getContext('2d', { willReadFrequently:true });
-      const src = sctx.getImageData(0,0,w,h);
-      const d = src.data;
+      // process up to 2048 for quality without locking up mobile
+      const c0 = scaleCanvasMax(srcCanvas, 2048);
+      const w = c0.width, h = c0.height;
+      const ctx = c0.getContext('2d', { willReadFrequently:true });
+      const img = ctx.getImageData(0,0,w,h);
+      const d = img.data;
 
-      const gray = new Float32Array(w*h);
-      for (let i=0,p=0;i<gray.length;i++,p+=4){
+      const L = new Float32Array(w*h);
+      const S = new Float32Array(w*h);
+
+      for (let i=0,p=0;i<L.length;i++,p+=4){
         const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
-        gray[i] = 0.2126*r + 0.7152*g + 0.0722*b;
+        const mx = Math.max(r,g,b), mn = Math.min(r,g,b);
+        const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+        const sat = (mx <= 0.0001) ? 0 : (mx - mn) / mx;
+        L[i] = lum;
+        S[i] = sat;
       }
 
-      // box blur (radius 3) to get broad form
-      const blur = new Float32Array(w*h);
-      const rad = 3;
-      for (let y=0;y<h;y++){
-        for (let x=0;x<w;x++){
-          let sum=0,cnt=0;
-          for (let yy=y-rad; yy<=y+rad; yy++){
-            if(yy<0||yy>=h) continue;
-            const row = yy*w;
-            for (let xx=x-rad; xx<=x+rad; xx++){
-              if(xx<0||xx>=w) continue;
-              sum += gray[row+xx];
-              cnt++;
-            }
+      // Separable blur for broad structure
+      function blur1D(src, dst, rad){
+        // horizontal
+        for (let y=0;y<h;y++){
+          let sum=0, cnt=0;
+          const row=y*w;
+          for(let x=-rad;x<=rad;x++){
+            const xx = Math.max(0, Math.min(w-1, x));
+            sum += src[row+xx]; cnt++;
           }
-          blur[y*w+x] = sum/cnt;
+          for(let x=0;x<w;x++){
+            dst[row+x] = sum/cnt;
+            const x0 = x-rad, x1 = x+rad+1;
+            const a = src[row + Math.max(0, Math.min(w-1, x0))];
+            const b = src[row + Math.max(0, Math.min(w-1, x1))];
+            sum += b - a;
+          }
         }
       }
+      function blurSeparable(src, rad){
+        const tmp = new Float32Array(w*h);
+        const out = new Float32Array(w*h);
+        blur1D(src, tmp, rad);
+        // vertical using tmp
+        for (let x=0;x<w;x++){
+          let sum=0, cnt=0;
+          for(let y=-rad;y<=rad;y++){
+            const yy = Math.max(0, Math.min(h-1, y));
+            sum += tmp[yy*w + x]; cnt++;
+          }
+          for(let y=0;y<h;y++){
+            out[y*w + x] = sum/cnt;
+            const y0 = y-rad, y1 = y+rad+1;
+            const a = tmp[Math.max(0, Math.min(h-1, y0))*w + x];
+            const b = tmp[Math.max(0, Math.min(h-1, y1))*w + x];
+            sum += b - a;
+          }
+        }
+        return out;
+      }
 
-      // edge (simple gradient magnitude)
+      const broad = blurSeparable(L, 6);
+      const mid   = blurSeparable(L, 2);
+
+      // edge magnitude (from mid)
       const edge = new Float32Array(w*h);
       for (let y=1;y<h-1;y++){
         for (let x=1;x<w-1;x++){
           const i=y*w+x;
-          const gx = blur[i+1]-blur[i-1];
-          const gy = blur[i+w]-blur[i-w];
-          edge[i] = Math.min(1, Math.abs(gx)*1.8 + Math.abs(gy)*1.8);
+          const gx = mid[i+1] - mid[i-1];
+          const gy = mid[i+w] - mid[i-w];
+          edge[i] = Math.min(1, Math.sqrt(gx*gx + gy*gy) * 2.0);
         }
       }
 
+      // non-tiling-ish procedural detail with domain warp guided by image
       function fract(x){ return x - Math.floor(x); }
       function hash(n){ return fract(Math.sin(n)*43758.5453123); }
+      function h2(x,y){ return hash(x*127.1 + y*311.7); }
       function noise(x,y){
-        const n = x*127.1 + y*311.7;
-        return hash(n);
+        const ix = Math.floor(x), iy = Math.floor(y);
+        const fx = x - ix, fy = y - iy;
+        const a = h2(ix,iy), b = h2(ix+1,iy), c = h2(ix,iy+1), d0 = h2(ix+1,iy+1);
+        const ux = fx*fx*(3-2*fx);
+        const uy = fy*fy*(3-2*fy);
+        const v = a*(1-ux)*(1-uy) + b*ux*(1-uy) + c*(1-ux)*uy + d0*ux*uy;
+        return v;
+      }
+      function fbm(x,y){
+        let v=0, a=0.5, f=1.0;
+        for(let k=0;k<5;k++){
+          v += a*noise(x*f, y*f);
+          f *= 2.02;
+          a *= 0.52;
+        }
+        return v;
       }
 
       const out = document.createElement('canvas');
@@ -277,35 +346,192 @@
       const outImg = octx.createImageData(w,h);
       const od = outImg.data;
 
+      // Seed changes the "unique" look per image
+      let seed = 0;
+      for (let i=0;i<Math.min(4000, L.length); i+=37) seed += L[i]*997.0 + S[i]*331.0;
+      seed = seed % 1000;
+
       for(let y=0;y<h;y++){
         for(let x=0;x<w;x++){
           const i=y*w+x;
-          const base = blur[i];
-          const ed = edge[i];
-          const micro = (noise(x*0.85, y*0.85)-0.5) * 0.12;
 
-          // combine: broad + edge lift + micro
-          let v = base*0.78 + ed*0.22 + micro;
+          // image guidance:
+          const b = broad[i];
+          const e = edge[i];
+          const sat = S[i];
 
-          // contrast curve so it "pops" more
-          v = Math.max(0, Math.min(1, (v-0.35)*1.25 + 0.35));
+          // domain warp: driven by broad luminance so it "follows" the background
+          const wx = (b - 0.5) * 2.2;
+          const wy = (mid[i] - 0.5) * 2.2;
+
+          const xx = (x / w) * 6.0 + wx + seed*0.001;
+          const yy = (y / h) * 6.0 + wy - seed*0.001;
+
+          const detail = fbm(xx, yy);                // 0..1
+          const grain  = fbm(xx*8.0, yy*8.0);        // micro
+
+          // Combine into a height: broad structure + edges + image-guided micro
+          let v = 0.62*broad[i] + 0.22*e + 0.16*(detail - 0.5);
+
+          // Modern-card micro sparkle texture slightly stronger where saturation is lower (background often flatter)
+          v += (grain - 0.5) * (0.10 + 0.20*(1.0 - sat));
+
+          // Contrast curve (exaggerated)
+          v = (v - 0.35) * 1.55 + 0.35;
+          v = Math.max(0, Math.min(1, v));
 
           const g = Math.round(v*255);
           const p=i*4;
           od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
         }
       }
+
       octx.putImageData(outImg,0,0);
       return out;
     }
 
-    // ---------------- card shaders ----------------
-    // Locked Pokémon-ish corners
+    // ---------------- auto mask: "Pokémon out of holo" ----------------
+    // Heuristic foreground extraction:
+    // - center weighted
+    // - edges + saturation (Pokémon art tends to be higher contrast/sat)
+    // - blurred + softened for clean blend
+    function makeAutoMask(srcCanvas){
+      // mask does NOT need full res; 768 keeps it smooth + fast
+      const c0 = scaleCanvasMax(srcCanvas, 768);
+      const w = c0.width, h = c0.height;
+      const ctx = c0.getContext('2d', { willReadFrequently:true });
+      const img = ctx.getImageData(0,0,w,h);
+      const d = img.data;
+
+      const lum = new Float32Array(w*h);
+      const sat = new Float32Array(w*h);
+
+      for (let i=0,p=0;i<lum.length;i++,p+=4){
+        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
+        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+        lum[i]=0.2126*r + 0.7152*g + 0.0722*b;
+        sat[i]=(mx<=1e-5)?0:((mx-mn)/mx);
+      }
+
+      // quick blur lum for gradients
+      function blurSeparable(src, rad){
+        const tmp = new Float32Array(w*h);
+        const out = new Float32Array(w*h);
+        // horizontal
+        for (let y=0;y<h;y++){
+          let sum=0;
+          const row=y*w;
+          for(let x=-rad;x<=rad;x++){
+            const xx=Math.max(0,Math.min(w-1,x));
+            sum += src[row+xx];
+          }
+          for(let x=0;x<w;x++){
+            out[row+x]=sum/(rad*2+1);
+            const x0=x-rad, x1=x+rad+1;
+            const a=src[row+Math.max(0,Math.min(w-1,x0))];
+            const b=src[row+Math.max(0,Math.min(w-1,x1))];
+            sum += b-a;
+          }
+        }
+        // vertical
+        for (let x=0;x<w;x++){
+          let sum=0;
+          for(let y=-rad;y<=rad;y++){
+            const yy=Math.max(0,Math.min(h-1,y));
+            sum += out[yy*w+x];
+          }
+          for(let y=0;y<h;y++){
+            tmp[y*w+x]=sum/(rad*2+1);
+            const y0=y-rad, y1=y+rad+1;
+            const a=out[Math.max(0,Math.min(h-1,y0))*w+x];
+            const b=out[Math.max(0,Math.min(h-1,y1))*w+x];
+            sum += b-a;
+          }
+        }
+        return tmp;
+      }
+
+      const bl = blurSeparable(lum, 2);
+
+      // edge strength
+      const edge = new Float32Array(w*h);
+      for (let y=1;y<h-1;y++){
+        for (let x=1;x<w-1;x++){
+          const i=y*w+x;
+          const gx = bl[i+1]-bl[i-1];
+          const gy = bl[i+w]-bl[i-w];
+          edge[i]=Math.min(1, Math.sqrt(gx*gx+gy*gy)*2.2);
+        }
+      }
+
+      // scoring + center weight
+      const score = new Float32Array(w*h);
+      for (let y=0;y<h;y++){
+        for (let x=0;x<w;x++){
+          const i=y*w+x;
+          const u = x/(w-1), v = y/(h-1);
+          const cx = u-0.5, cy = v-0.45; // slightly favor upper center (typical art box)
+          const center = Math.exp(-(cx*cx*2.0 + cy*cy*3.0));
+          // score mixes edges + saturation, with center weighting
+          score[i] = center * (0.70*edge[i] + 0.30*sat[i]);
+        }
+      }
+
+      // threshold at percentile for "foreground"
+      const sample = [];
+      for (let i=0;i<score.length;i+=7) sample.push(score[i]);
+      sample.sort((a,b)=>a-b);
+      const thr = sample[Math.floor(sample.length*0.75)] ?? 0.25;
+
+      // build mask
+      const mask = new Float32Array(w*h);
+      for (let i=0;i<mask.length;i++){
+        let m = (score[i] > thr) ? 1.0 : 0.0;
+        // soften with edge contribution to avoid missing fine bits
+        m = Math.max(m, edge[i]*0.65);
+        mask[i]=m;
+      }
+
+      // blur mask for clean blend
+      const mBlur = blurSeparable(mask, 6);
+
+      // normalize + curve
+      let mn=1e9,mx=-1e9;
+      for (let i=0;i<mBlur.length;i++){ mn=Math.min(mn,mBlur[i]); mx=Math.max(mx,mBlur[i]); }
+      const out = document.createElement('canvas');
+      out.width=w; out.height=h;
+      const octx = out.getContext('2d', { willReadFrequently:true });
+      const outImg = octx.createImageData(w,h);
+      const od = outImg.data;
+
+      for(let i=0;i<mBlur.length;i++){
+        let v = (mBlur[i]-mn)/Math.max(1e-6,(mx-mn));
+        // make it more decisive but keep soft edges
+        v = Math.pow(Math.max(0,Math.min(1,v)), 0.75);
+        const g = Math.round(v*255);
+        const p=i*4;
+        od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
+      }
+      octx.putImageData(outImg,0,0);
+      return out;
+    }
+
+    // ---------------- shaders ----------------
     const CORNER = 0.044;
 
-    // Brightness tuning (already working for you)
+    // brightness tuning (confirmed)
     const STUDIO_GAMMA = 0.78;
     const STUDIO_GAIN  = 1.45;
+
+    // Holo/emboss defaults (more pronounced)
+    const HOLO_INTENSITY = 2.35; // stronger
+    const HOLO_BAND_W    = 0.26; // wide bands (your favorite zone)
+    const HOLO_WARP      = 0.22; // wavy distortion
+    const HOLO_GRAIN     = 0.26; // glitter
+    const HOLO_SPEC      = 1.05; // specular pop
+
+    const EMBOSS_STRENGTH = 0.85; // more obvious emboss
+    const HEIGHT_UV_SCALE = 1.0;
 
     const roundedRectGLSL = `
       float roundedMask(vec2 uv, float r){
@@ -317,35 +543,24 @@
       }
     `;
 
-    // Holo/emboss parameters (set to "extreme modern card" defaults)
-    const HOLO_INTENSITY = 1.35; // overall strength
-    const HOLO_BAND_W    = 0.26; // wider bands (you liked ~0.25)
-    const HOLO_WARP      = 0.18; // wavy distortion amount
-    const HOLO_GRAIN     = 0.18; // glitter/noise
-
-    const EMBOSS_STRENGTH = 0.55; // normal perturb strength (visual emboss)
-    const HEIGHT_UV_SCALE = 1.0;  // keep aligned
-
     const uniforms = {
-      // textures
       uFront: { value: null },
       uBack:  { value: null },
-      uHeight:{ value: null },      // linear grayscale height
+      uHeight:{ value: null },     // linear grayscale
+      uMask:  { value: null },     // linear grayscale; 1 = Pokémon (no holo), 0 = background (holo ok)
       uHasHeight:{ value: 0.0 },
+      uHasMask:  { value: 0.0 },
 
-      // toggles
       uUseHolo:   { value: 1.0 },
       uUseEmboss: { value: 1.0 },
+      uUseMask:   { value: 1.0 },
 
-      // constants
       uCorner: { value: CORNER },
       uTime:   { value: 0.0 },
 
-      // view/light
       uLightDir: { value: new THREE.Vector3(0.3, 0.9, 0.5).normalize() }
     };
 
-    // Common vertex: also pass a view vector-ish
     const cardVS = `
       varying vec2 vUv;
       varying vec3 vN;
@@ -359,7 +574,6 @@
       }
     `;
 
-    // Front shader: base + emboss (from height) + holo (modulated by height)
     const frontFS = `
       precision highp float;
       varying vec2 vUv;
@@ -368,10 +582,14 @@
 
       uniform sampler2D uFront;
       uniform sampler2D uHeight;
+      uniform sampler2D uMask;
+
       uniform float uHasHeight;
+      uniform float uHasMask;
 
       uniform float uUseHolo;
       uniform float uUseEmboss;
+      uniform float uUseMask;
 
       uniform float uCorner;
       uniform float uTime;
@@ -406,25 +624,29 @@
 
         vec3 base = texture2D(uFront, vUv).rgb;
 
-        // Studio lift (confirmed)
+        // Studio lift
         base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
         base *= ${STUDIO_GAIN.toFixed(4)};
         base = clamp(base, 0.0, 1.0);
 
-        // Height sampling
-        float h = 0.5;
         vec2 uvH = vUv * ${HEIGHT_UV_SCALE.toFixed(3)};
+        float h = 0.5;
         if(uHasHeight > 0.5){
           h = texture2D(uHeight, uvH).r;
         }
 
-        // Emboss as a normal perturbation from height gradient
+        // Optional mask: 1 = Pokémon/foreground (reduce holo), 0 = background
+        float m = 0.0;
+        if(uHasMask > 0.5 && uUseMask > 0.5){
+          m = texture2D(uMask, vUv).r;
+        }
+
         vec3 N = normalize(vN);
         vec3 L = normalize(uLightDir);
         vec3 V = normalize(vV);
 
+        // Emboss: normal perturb from height gradient
         if(uUseEmboss > 0.5 && uHasHeight > 0.5){
-          // gradient estimate; use small step in UV
           vec2 e = vec2(1.0/1024.0, 1.0/1024.0);
           float hx = texture2D(uHeight, uvH + vec2(e.x, 0.0)).r;
           float hy = texture2D(uHeight, uvH + vec2(0.0, e.y)).r;
@@ -432,34 +654,43 @@
           N = normalize(N + vec3(-grad.x, -grad.y, 0.0) * ${EMBOSS_STRENGTH.toFixed(4)});
         }
 
-        // Basic diffuse shading (keep subtle because texture is "finished")
+        // subtle light response (texture is already "finished")
         float ndl = clamp(dot(N, L)*0.45 + 0.55, 0.0, 1.0);
-        base *= mix(0.96, 1.08, ndl);
+        base *= mix(0.98, 1.10, ndl);
 
         // Holo layer (front only)
         if(uUseHolo > 0.5){
-          // Fresnel: stronger at glancing angles
-          float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.2);
+          float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.15);
 
-          // Wide band pattern + wavy distortion
+          // wide bands + wavy distortion
           float w = noise(vUv*8.0 + vec2(uTime*0.05, -uTime*0.04));
           float warp = (w - 0.5) * ${HOLO_WARP.toFixed(4)};
           float band = sin(((vUv.y + warp) * 10.0 + (vUv.x + warp) * 2.5) / max(0.001, ${HOLO_BAND_W.toFixed(4)}) + uTime*0.55);
           band = band * 0.5 + 0.5;
 
-          // Glitter grain
-          float g = noise(vUv*220.0 + uTime*0.15);
+          // glitter grain
+          float g = noise(vUv*240.0 + uTime*0.18);
 
-          // Height modulation: raised parts shimmer differently
-          float heightMod = 0.65 + (h - 0.5) * 1.1;
+          // height modulation: raised parts shimmer more/less
+          float heightMod = 0.70 + (h - 0.5) * 1.35;
 
+          // mask modulation: reduce holo on Pokémon (m≈1)
+          float maskMod = 1.0 - clamp(m*1.15, 0.0, 1.0);
+
+          // color
           vec3 holoCol = rainbow(band*0.65 + w*0.30 + fres*0.22);
           holoCol += (g - 0.5) * ${HOLO_GRAIN.toFixed(4)};
 
-          // Apply holo mostly in highlights + fresnel, plus height response
-          float holoAmt = ${HOLO_INTENSITY.toFixed(4)} * (0.10 + 0.55*fres) * clamp(heightMod, 0.0, 1.4);
+          // specular "foil flash"
+          vec3 H = normalize(L + V);
+          float spec = pow(max(dot(N, H), 0.0), 60.0) * ${HOLO_SPEC.toFixed(4)};
+
+          float holoAmt = ${HOLO_INTENSITY.toFixed(4)} * (0.12 + 0.62*fres) * clamp(heightMod, 0.0, 1.6);
+          holoAmt *= maskMod;
 
           base += holoCol * holoAmt;
+          base += vec3(spec) * (0.15 + 0.65*fres) * maskMod;
+
           base = clamp(base, 0.0, 1.0);
         }
 
@@ -467,7 +698,6 @@
       }
     `;
 
-    // Back shader: just the back texture (no holo, no emboss)
     const backFS = `
       precision highp float;
       varying vec2 vUv;
@@ -479,12 +709,9 @@
         if(inside < 0.5) discard;
 
         vec3 base = texture2D(uBack, vUv).rgb;
-
-        // Studio lift (keep consistent)
         base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
         base *= ${STUDIO_GAIN.toFixed(4)};
         base = clamp(base, 0.0, 1.0);
-
         gl_FragColor = vec4(base, 1.0);
       }
     `;
@@ -504,7 +731,7 @@
       vertexShader: `
         varying vec2 vUv;
         void main(){
-          vUv = vec2(1.0 - uv.x, uv.y); // cancel mirror for rotated back
+          vUv = vec2(1.0 - uv.x, uv.y);
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
         }
       `,
@@ -522,7 +749,7 @@
     group.rotation.x = -0.04;
     scene.add(group);
 
-    // ---------------- load textures (file/url) ----------------
+    // ---------------- load textures (url/file) ----------------
     const loader = new THREE.TextureLoader();
     function loadTex(url){
       return new Promise((resolve,reject)=>{
@@ -535,50 +762,67 @@
       });
     }
 
-    async function setFrontFromCanvas(canvas){
-      const tex = canvasToTexture(canvas, {srgb:true});
-      uniforms.uFront.value = tex;
+    async function setFrontFromCanvas(c){
+      uniforms.uFront.value = canvasToTexture(c, {srgb:true});
     }
-
-    async function setHeightFromCanvas(canvas){
-      const tex = canvasToTexture(canvas, {srgb:false});
-      uniforms.uHeight.value = tex;
+    async function setHeightFromCanvas(c){
+      // height should be linear
+      uniforms.uHeight.value = canvasToTexture(c, {srgb:false});
       uniforms.uHasHeight.value = 1.0;
     }
+    async function setMaskFromCanvas(c){
+      // mask should be linear
+      uniforms.uMask.value = canvasToTexture(c, {srgb:false});
+      uniforms.uHasMask.value = 1.0;
+    }
+    function clearHeight(){ uniforms.uHeight.value=null; uniforms.uHasHeight.value=0.0; }
+    function clearMask(){ uniforms.uMask.value=null; uniforms.uHasMask.value=0.0; }
 
-    function clearHeight(){
-      uniforms.uHeight.value = null;
-      uniforms.uHasHeight.value = 0.0;
+    async function regenAutoFromFront(frontCanvasOrNull){
+      // If a user uploaded explicit height/mask, don't stomp them.
+      const hasUserHeight = ui.heightFile.files?.length;
+      const hasUserMask = ui.maskFile.files?.length;
+
+      if(ui.useAutoHeight.checked && !hasUserHeight){
+        status('Generating height…');
+        const hc = makeAutoHeight(frontCanvasOrNull);
+        await setHeightFromCanvas(hc);
+        log('✓ Auto height generated (unique, image-guided)');
+      } else if(!hasUserHeight && !ui.useAutoHeight.checked){
+        clearHeight();
+        log('ℹ Auto-height off (no height)');
+      }
+
+      if(ui.useAutoMask.checked && !hasUserMask){
+        status('Generating mask…');
+        const mc = makeAutoMask(frontCanvasOrNull);
+        await setMaskFromCanvas(mc);
+        log('✓ Auto mask generated (Pokémon masked out)');
+      } else if(!hasUserMask && !ui.useAutoMask.checked){
+        clearMask();
+        log('ℹ Auto-mask off (no mask)');
+      }
+
+      status('Ready');
     }
 
     async function loadPreset(which){
       status('Loading…');
       logEl.textContent = '';
-
       try{
         const frontPath = PRESETS[which];
-        const [frontT, backT] = await Promise.all([
-          loadTex(frontPath),
-          loadTex(PATH_BACK)
-        ]);
+        const [frontT, backT] = await Promise.all([ loadTex(frontPath), loadTex(PATH_BACK) ]);
         uniforms.uFront.value = frontT;
         uniforms.uBack.value  = backT;
 
         log('✓ Loaded: ' + frontPath);
         log('✓ Loaded: ' + PATH_BACK);
 
-        // height setup
-        if(ui.useAutoHeight.checked){
-          const srcCanvas = await loadImageToCanvas(frontPath);
-          const hCanvas = makeAutoHeight(srcCanvas);
-          await setHeightFromCanvas(hCanvas);
-          log('✓ Auto height generated (preset)', 'ok');
-        }else{
-          clearHeight();
-          log('ℹ Auto-height off (no height)', 'warn');
-        }
+        // regenerate auto height/mask from the preset image pixels
+        const src = await loadImageToCanvas(frontPath);
+        const srcP = scaleCanvasMax(src, 2048); // height is based on this; good quality
+        await regenAutoFromFront(srcP);
 
-        status('Ready');
       }catch(e){
         log('✗ ' + (e.message || e));
         status('Error');
@@ -591,27 +835,47 @@
 
     ui.useHolo.addEventListener('change', ()=> uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0);
     ui.useEmboss.addEventListener('change', ()=> uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0);
+    ui.useAutoMask.addEventListener('change', ()=> uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0);
 
-    // Turning off auto-height doesn't remove a user-uploaded height; it just stops generating on reload.
     ui.useAutoHeight.addEventListener('change', async ()=>{
-      // if they turned auto-height ON and no height exists, generate from current front
-      if(ui.useAutoHeight.checked && uniforms.uFront.value){
+      // If turned on and no user height, regenerate from current front source
+      if(ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
         try{
           status('Generating height…');
-          // generate from currently shown front texture by reloading its source:
-          // If user uploaded front, we regenerate from file (handled in upload path). If preset, regenerate via preset path.
-          const isPreset = ui.frontFile.files?.length ? false : true;
-          const srcCanvas = isPreset
-            ? await loadImageToCanvas(PRESETS[ui.preset.value])
-            : await loadImageToCanvas(ui.frontFile.files[0]);
-          const hCanvas = makeAutoHeight(srcCanvas);
-          await setHeightFromCanvas(hCanvas);
+          const src = ui.frontFile.files?.length ? await loadImageToCanvas(ui.frontFile.files[0]) : await loadImageToCanvas(PRESETS[ui.preset.value]);
+          await setHeightFromCanvas(makeAutoHeight(scaleCanvasMax(src, 2048)));
+          log('✓ Auto height generated');
           status('Ready');
-          log('✓ Auto height generated', 'ok');
         }catch(e){
           log('✗ Auto height failed: ' + (e.message||e));
           status('Error');
         }
+      }
+      if(!ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
+        clearHeight();
+        log('ℹ Auto-height off (no height)');
+      }
+    });
+
+    ui.useAutoMask.addEventListener('change', async ()=>{
+      uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0;
+
+      // If turned on and no user mask, regenerate
+      if(ui.useAutoMask.checked && !(ui.maskFile.files?.length)){
+        try{
+          status('Generating mask…');
+          const src = ui.frontFile.files?.length ? await loadImageToCanvas(ui.frontFile.files[0]) : await loadImageToCanvas(PRESETS[ui.preset.value]);
+          await setMaskFromCanvas(makeAutoMask(src));
+          log('✓ Auto mask generated');
+          status('Ready');
+        }catch(e){
+          log('✗ Auto mask failed: ' + (e.message||e));
+          status('Error');
+        }
+      }
+      if(!ui.useAutoMask.checked && !(ui.maskFile.files?.length)){
+        clearMask();
+        log('ℹ Auto-mask off (no mask)');
       }
     });
 
@@ -620,17 +884,12 @@
       if(!file) return;
       status('Loading front…');
       try{
-        const c = await loadImageToCanvas(file);
-        await setFrontFromCanvas(c);
+        const src = await loadImageToCanvas(file);
+        await setFrontFromCanvas(src);
         log('✓ Loaded front upload: ' + file.name);
 
-        // if auto-height is on AND no explicit height file present, regenerate
-        if(ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
-          const hCanvas = makeAutoHeight(c);
-          await setHeightFromCanvas(hCanvas);
-          log('✓ Auto height generated (upload)');
-        }
-        status('Ready');
+        // regenerate auto height/mask unless user supplied explicit ones
+        await regenAutoFromFront(scaleCanvasMax(src, 2048));
       }catch(err){
         log('✗ Front upload failed: ' + (err.message||err));
         status('Error');
@@ -643,11 +902,26 @@
       status('Loading height…');
       try{
         const c = await loadImageToCanvas(file);
-        await setHeightFromCanvas(c);
+        await setHeightFromCanvas(scaleCanvasMax(c, 2048));
         log('✓ Loaded height upload: ' + file.name);
         status('Ready');
       }catch(err){
         log('✗ Height upload failed: ' + (err.message||err));
+        status('Error');
+      }
+    });
+
+    ui.maskFile.addEventListener('change', async (e)=>{
+      const file = e.target.files?.[0];
+      if(!file) return;
+      status('Loading mask…');
+      try{
+        const c = await loadImageToCanvas(file);
+        await setMaskFromCanvas(scaleCanvasMax(c, 1024));
+        log('✓ Loaded mask upload: ' + file.name);
+        status('Ready');
+      }catch(err){
+        log('✗ Mask upload failed: ' + (err.message||err));
         status('Error');
       }
     });
@@ -671,6 +945,7 @@
     // ---------------- boot ----------------
     uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0;
     uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0;
+    uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0;
 
     status('Loading preset…');
     loadPreset('ray');
