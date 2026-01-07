@@ -3,33 +3,66 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3D Card Viewer (Height Map + Holo)</title>
+  <title>3D Card Viewer (iOS-safe Uploads + Height + Holo)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    canvas { display: block; }
+
     #ui {
       position: fixed; top: 12px; left: 12px; z-index: 10;
-      background: rgba(0,0,0,.55); color: #fff; padding: 10px 12px; border-radius: 10px;
-      backdrop-filter: blur(6px);
-      display: grid; gap: 8px; min-width: 280px;
+      background: rgba(0,0,0,.58); color: #fff; padding: 12px 12px; border-radius: 12px;
+      backdrop-filter: blur(8px);
+      display: grid; gap: 10px; min-width: 300px; max-width: min(92vw, 380px);
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
-    #ui label { font-size: 12px; opacity: .9; display: grid; gap: 4px; }
+    #ui label { font-size: 12px; opacity: .95; display: grid; gap: 6px; }
     #ui small { opacity: .75; line-height: 1.25; }
-    #ui .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
-    #ui input[type="range"] { width: 160px; }
-    canvas { display: block; }
+    #ui .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+    #ui input[type="range"] { width: 170px; }
+    #ui input[type="file"] { width: 100%; }
+    #ui .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,.08); padding: 6px 10px; border-radius: 999px;
+      font-size: 12px; opacity: .9;
+    }
+    #status {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.08);
+      padding: 8px 10px;
+      border-radius: 10px;
+      max-height: 140px;
+      overflow: auto;
+      line-height: 1.25;
+    }
   </style>
 </head>
 <body>
   <div id="ui">
+    <div class="pill" id="caps">WebGL: checking…</div>
+
     <label>Front image (base color)
       <input id="frontInput" type="file" accept="image/*" />
     </label>
+
     <label>Back image (base color)
       <input id="backInput" type="file" accept="image/*" />
     </label>
+
     <label>Height map (grayscale)
       <input id="heightInput" type="file" accept="image/*" />
     </label>
+
+    <div class="row">
+      <label style="margin:0;">Max upload size</label>
+      <select id="maxSizeSelect">
+        <option value="1024">1024</option>
+        <option value="2048" selected>2048 (recommended)</option>
+        <option value="4096">4096 (may fail on iOS)</option>
+      </select>
+    </div>
 
     <div class="row">
       <label style="margin:0;">Displacement</label>
@@ -43,14 +76,30 @@
 
     <small>
       Drag to rotate • Scroll to zoom • Right-drag to pan<br/>
-      Height map: brighter = higher relief. Needs subdivisions to show detail.
+      Height map: brighter = higher relief. Large photos will be downscaled.
     </small>
+
+    <div id="status">Ready.</div>
   </div>
 
   <script type="module">
-    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
-    import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-    import { RoomEnvironment } from "https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+    // More reliable CDN for GitHub Pages + mobile networks:
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+
+    const statusEl = document.getElementById("status");
+    const capsEl = document.getElementById("caps");
+    function logStatus(msg) {
+      statusEl.textContent = msg + "\n" + statusEl.textContent;
+    }
+    function setCaps(msg) { capsEl.textContent = msg; }
+
+    // -------- Basic WebGL capability hint --------
+    const canvasTest = document.createElement("canvas");
+    const gl = canvasTest.getContext("webgl") || canvasTest.getContext("experimental-webgl");
+    if (!gl) setCaps("WebGL: unavailable (textures won’t work)");
+    else setCaps("WebGL: available");
 
     // ---------- Renderer ----------
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -76,7 +125,7 @@
     controls.maxDistance = 3.0;
     controls.target.set(0, 0.05, 0);
 
-    // ---------- Environment reflections (key for holo sheen) ----------
+    // ---------- Environment reflections (key for holo) ----------
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environment = envTex;
@@ -98,7 +147,6 @@
     const thickness = 0.02;
     const cornerRadius = 0.045;
 
-    // Rounded rectangle shape
     function roundedRectShape(w, h, r) {
       const x = -w / 2, y = -h / 2;
       const shape = new THREE.Shape();
@@ -115,7 +163,7 @@
       return shape;
     }
 
-    // Build the edge as an extrude (low poly is fine for edges)
+    // Edge geometry (low-ish poly is fine)
     const edgeGeom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
       depth: thickness,
       bevelEnabled: true,
@@ -126,57 +174,104 @@
     });
     edgeGeom.translate(0, 0, -thickness/2);
 
-    // Front/back faces as separate planes with high subdivisions for displacement
-    // Increase segments if you want finer height-map detail (costs more GPU)
+    // Face geometry needs subdivisions for displacement
+    // (If you bump max upload size higher, consider lowering these on mobile.)
     const segX = 220;
     const segY = 300;
-
     const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, segX, segY);
 
-    // Mask out corners (so plane stays rounded): discard fragments outside rounded rect
-    // We'll do this via onBeforeCompile for each face material.
-
-    const texLoader = new THREE.TextureLoader();
-
-    // Defaults so you see something immediately
-    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
-    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
-    for (const t of [defaultFront, defaultBack]) {
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
-      t.flipY = false;
+    // ---------- Texture helpers (iOS-safe) ----------
+    function makeTextureFromImg(img, { isDataMap = false } = {}) {
+      const tex = new THREE.Texture(img);
+      tex.flipY = false;
+      tex.anisotropy = 8;
+      tex.colorSpace = isDataMap ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      return tex;
     }
 
-    // Shared height texture (optional)
-    let heightTex = null;
+    function downscaleImageToMax(img, maxSize) {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      const largest = Math.max(w0, h0);
+      if (!maxSize || largest <= maxSize) return img;
 
-    // ---- Holographic physical material base ----
-    function makeHoloPhysicalMaterial(mapTex) {
+      const scale = maxSize / largest;
+      const w = Math.max(1, Math.round(w0 * scale));
+      const h = Math.max(1, Math.round(h0 * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const out = new Image();
+      out.src = canvas.toDataURL("image/jpeg", 0.92);
+      return out;
+    }
+
+    async function loadImageFromFile(file) {
+      // FileReader path is the most reliable on iOS Safari
+      const dataURL = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("FileReader failed"));
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error("Image decode failed (format unsupported?)"));
+        im.src = dataURL;
+      });
+
+      return img;
+    }
+
+    async function loadTextureFromFile(file, { maxSize = 2048, isDataMap = false } = {}) {
+      const img = await loadImageFromFile(file);
+
+      logStatus(`Loaded image: ${file.name} (${img.naturalWidth}x${img.naturalHeight})`);
+
+      const maybeDown = downscaleImageToMax(img, maxSize);
+      const outImg = await new Promise((resolve, reject) => {
+        if (maybeDown === img) return resolve(img);
+        maybeDown.onload = () => resolve(maybeDown);
+        maybeDown.onerror = () => reject(new Error("Downscaled image decode failed"));
+      });
+
+      if (outImg !== img) {
+        logStatus(`Downscaled to: ${outImg.naturalWidth}x${outImg.naturalHeight} (max ${maxSize})`);
+      }
+
+      return makeTextureFromImg(outImg, { isDataMap });
+    }
+
+    // ---------- Materials (Holo physical + shader film) ----------
+    function makeHoloPhysicalMaterial(initialMap) {
       const mat = new THREE.MeshPhysicalMaterial({
-        map: mapTex,
+        map: initialMap,
         metalness: 0.35,
         roughness: 0.25,
         envMapIntensity: 1.25,
         clearcoat: 1.0,
         clearcoatRoughness: 0.12,
-        // iridescence is supported in modern three versions:
         iridescence: 1.0,
         iridescenceIOR: 1.35,
-        iridescenceThicknessRange: [120, 680], // nanometers-ish; controls rainbow spread
+        iridescenceThicknessRange: [120, 680],
       });
 
-      // Height map (true displacement) — requires lots of segments (we have them)
+      // displacement settings updated live
       mat.displacementScale = parseFloat(document.getElementById("dispRange").value);
       mat.displacementBias = -mat.displacementScale * 0.35;
 
-      // Rounded-corner alpha mask + extra “holo film” sparkle/rainbow tweak
       mat.onBeforeCompile = (shader) => {
         shader.uniforms.uTime = { value: 0 };
         shader.uniforms.uHolo = { value: 1 };
         shader.uniforms.uRadius = { value: cornerRadius };
         shader.uniforms.uSize = { value: new THREE.Vector2(cardWidth, cardHeight) };
 
-        // Pass vUv already exists for map; we’ll use it for masking
         shader.fragmentShader = shader.fragmentShader
           .replace(
             "#include <common>",
@@ -190,8 +285,6 @@
                vec2 q = abs(p) - b + vec2(r);
                return length(max(q,0.0)) + min(max(q.x,q.y),0.0) - r;
              }
-
-             // cheap noise
              float hash21(vec2 p){
                p = fract(p*vec2(123.34, 456.21));
                p += dot(p, p+45.32);
@@ -202,9 +295,8 @@
           .replace(
             "#include <alphamap_fragment>",
             `#include <alphamap_fragment>
-             // Rounded-corner clip in UV space
+             // rounded corner discard
              vec2 uv = vUv;
-             // map uv 0..1 -> local coords centered at 0
              vec2 p = (uv - 0.5) * uSize;
              float d = sdRoundedRect(p, 0.5*uSize, uRadius);
              if (d > 0.0005) discard;
@@ -214,18 +306,20 @@
             "#include <output_fragment>",
             `#include <output_fragment>
              if (uHolo > 0.5) {
-               // view-dependent rainbow sheen (adds on top of physical shading)
-               // fresnel-ish term
-               float f = pow(1.0 - saturate(dot(normalize(vNormal), normalize(vViewPosition))), 2.0);
+               // Fresnel-ish term (stronger at grazing angles)
+               float f = pow(1.0 - saturate(dot(normalize(vNormal), normalize(vViewPosition))), 2.4);
 
-               // moving rainbow bands
-               float bands = sin((vUv.y*60.0) + (uTime*1.6) + vUv.x*12.0) * 0.5 + 0.5;
+               // Animated prismatic bands (foil feel)
+               float bands = sin((vUv.y*70.0) + (uTime*1.65) + vUv.x*18.0) * 0.5 + 0.5;
 
-               // subtle sparkle
-               float sparkle = step(0.985, hash21(vUv*vec2(900.0,700.0) + uTime*0.15)) * 0.9;
+               // Slight diagonal streaks
+               float diag = sin((vUv.x*80.0 + vUv.y*55.0) + uTime*0.9) * 0.5 + 0.5;
+
+               // Micro sparkle
+               float sparkle = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2)) * 0.9;
 
                vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
-               vec3 film = rainbow * (0.18 + 0.55*f) + sparkle;
+               vec3 film = rainbow * (0.12 + 0.75*f) + rainbow * (diag*0.08) + sparkle;
 
                gl_FragColor.rgb += film * 0.55;
              }
@@ -238,6 +332,16 @@
       return mat;
     }
 
+    // Default textures so you see something even before uploading
+    const texLoader = new THREE.TextureLoader();
+    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
+    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
+    for (const t of [defaultFront, defaultBack]) {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 8;
+      t.flipY = false;
+    }
+
     const frontMat = makeHoloPhysicalMaterial(defaultFront);
     const backMat  = makeHoloPhysicalMaterial(defaultBack);
 
@@ -247,37 +351,35 @@
       roughness: 0.95
     });
 
-    // Apply height map if present
+    let heightTex = null;
     function applyHeightToMats() {
       frontMat.displacementMap = heightTex;
-      backMat.displacementMap = heightTex;
+      backMat.displacementMap  = heightTex;
       frontMat.needsUpdate = true;
-      backMat.needsUpdate = true;
+      backMat.needsUpdate  = true;
+      logStatus(heightTex ? "Height map applied." : "Height map cleared.");
     }
 
-    // Group card parts
+    // ---------- Build the card ----------
     const cardGroup = new THREE.Group();
     scene.add(cardGroup);
 
-    // Edge mesh
     const edgeMesh = new THREE.Mesh(edgeGeom, edgeMat);
     cardGroup.add(edgeMesh);
 
-    // Face meshes (offset slightly outward so they don't z-fight with edge caps)
     const frontMesh = new THREE.Mesh(faceGeom, frontMat);
     frontMesh.position.z = thickness/2 + 0.0008;
     cardGroup.add(frontMesh);
 
     const backMesh = new THREE.Mesh(faceGeom, backMat);
-    backMesh.rotation.y = Math.PI;      // flip
+    backMesh.rotation.y = Math.PI;
     backMesh.position.z = -thickness/2 - 0.0008;
     cardGroup.add(backMesh);
 
-    // Initial pose
     cardGroup.rotation.x = -0.08;
     cardGroup.rotation.y = 0.55;
 
-    // Ground plane
+    // Ground
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(6, 6),
       new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
@@ -286,61 +388,79 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---------- File upload helpers ----------
-    function loadTextureFromFile(file, cb) {
-      const url = URL.createObjectURL(file);
-      texLoader.load(url, (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 8;
-        tex.flipY = false;
-        cb(tex);
-        URL.revokeObjectURL(url);
-      });
+    // ---------- UI wiring ----------
+    const frontInput = document.getElementById("frontInput");
+    const backInput  = document.getElementById("backInput");
+    const heightInput= document.getElementById("heightInput");
+    const dispRange  = document.getElementById("dispRange");
+    const holoToggle = document.getElementById("holoToggle");
+    const maxSizeSel = document.getElementById("maxSizeSelect");
+
+    function currentMaxSize() {
+      return parseInt(maxSizeSel.value, 10);
     }
 
-    document.getElementById("frontInput").addEventListener("change", (e) => {
-      const f = e.target.files?.[0]; if (!f) return;
-      loadTextureFromFile(f, (tex) => {
+    frontInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        logStatus(`Front upload started: ${file.name}`);
+        const tex = await loadTextureFromFile(file, { maxSize: currentMaxSize(), isDataMap: false });
         if (frontMat.map) frontMat.map.dispose();
         frontMat.map = tex;
         frontMat.needsUpdate = true;
-      });
+        logStatus("Front texture applied ✅");
+      } catch (err) {
+        logStatus("Front texture failed ❌ " + err.message);
+        alert("Front texture failed: " + err.message);
+      }
     });
 
-    document.getElementById("backInput").addEventListener("change", (e) => {
-      const f = e.target.files?.[0]; if (!f) return;
-      loadTextureFromFile(f, (tex) => {
+    backInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        logStatus(`Back upload started: ${file.name}`);
+        const tex = await loadTextureFromFile(file, { maxSize: currentMaxSize(), isDataMap: false });
         if (backMat.map) backMat.map.dispose();
         backMat.map = tex;
         backMat.needsUpdate = true;
-      });
+        logStatus("Back texture applied ✅");
+      } catch (err) {
+        logStatus("Back texture failed ❌ " + err.message);
+        alert("Back texture failed: " + err.message);
+      }
     });
 
-    document.getElementById("heightInput").addEventListener("change", (e) => {
-      const f = e.target.files?.[0]; if (!f) return;
-      loadTextureFromFile(f, (tex) => {
-        // Height maps should be treated like data. Keep in sRGB? Better as linear.
-        tex.colorSpace = THREE.NoColorSpace; // important: don't apply sRGB curve
-        tex.anisotropy = 8;
-        tex.flipY = false;
+    heightInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        logStatus(`Height upload started: ${file.name}`);
+        const tex = await loadTextureFromFile(file, { maxSize: currentMaxSize(), isDataMap: true });
         if (heightTex) heightTex.dispose();
         heightTex = tex;
         applyHeightToMats();
-      });
+        logStatus("Height map applied ✅");
+      } catch (err) {
+        logStatus("Height map failed ❌ " + err.message);
+        alert("Height map failed: " + err.message);
+      }
     });
 
-    document.getElementById("dispRange").addEventListener("input", (e) => {
-      const v = parseFloat(e.target.value);
+    dispRange.addEventListener("input", () => {
+      const v = parseFloat(dispRange.value);
       frontMat.displacementScale = v;
-      backMat.displacementScale = v;
+      backMat.displacementScale  = v;
       frontMat.displacementBias = -v * 0.35;
-      backMat.displacementBias = -v * 0.35;
+      backMat.displacementBias  = -v * 0.35;
     });
 
-    document.getElementById("holoToggle").addEventListener("change", (e) => {
-      const on = e.target.checked ? 1 : 0;
+    holoToggle.addEventListener("change", () => {
+      const on = holoToggle.checked ? 1 : 0;
       if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uHolo.value = on;
       if (backMat.userData.shader)  backMat.userData.shader.uniforms.uHolo.value = on;
+      logStatus(`Holographic: ${on ? "ON" : "OFF"}`);
     });
 
     // ---------- Resize ----------
@@ -363,6 +483,8 @@
       renderer.render(scene, camera);
     }
     animate();
+
+    logStatus("Viewer loaded. Upload textures to apply them.");
   </script>
 </body>
 </html>
