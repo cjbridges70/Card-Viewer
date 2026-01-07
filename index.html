@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Card Viewer (Stable • Studio Lighting)</title>
+  <title>Card Viewer (Stable • Studio Lighting BRIGHT)</title>
   <style>
     html,body{height:100%;margin:0;overflow:hidden;background:#0b0e12;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     #hud{
@@ -72,7 +72,6 @@
     const statusEl = document.getElementById('status');
     function log(s){ logEl.textContent += s + "\\n"; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
     function status(s){ statusEl.textContent = s; }
-
     document.getElementById('toggleLog').onclick = ()=> logEl.classList.toggle('on');
 
     // ---------- renderer/scene ----------
@@ -80,7 +79,7 @@
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    // ✅ Studio / product look: NO tone mapping
+    // ✅ True studio/product: NO tone mapping (we control exposure ourselves)
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
 
@@ -92,29 +91,34 @@
     const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.01, 50);
     camera.position.set(0, 0.06, 1.9);
 
-    // ---------- STUDIO LIGHTING (flat & bright) ----------
-    const topLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    topLight.position.set(0, 2.5, 0);
+    // ---------- STUDIO LIGHTING (VERY BRIGHT, FLAT) ----------
+    // Add strong ambient wash + hemi (this removes “dark tilt” at angles)
+    const amb = new THREE.AmbientLight(0xffffff, 2.2);
+    scene.add(amb);
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 2.6);
+    scene.add(hemi);
+
+    // 5-point softbox-ish rig (intensities pushed for product look)
+    const topLight = new THREE.DirectionalLight(0xffffff, 4.5);
+    topLight.position.set(0, 2.8, 0.2);
     scene.add(topLight);
 
-    const frontLight = new THREE.DirectionalLight(0xffffff, 1.8);
-    frontLight.position.set(0, 0.8, 2.5);
+    const frontLight = new THREE.DirectionalLight(0xffffff, 4.0);
+    frontLight.position.set(0, 0.9, 3.0);
     scene.add(frontLight);
 
-    const leftLight = new THREE.DirectionalLight(0xffffff, 1.1);
-    leftLight.position.set(-2.5, 0.4, 1.2);
+    const leftLight = new THREE.DirectionalLight(0xffffff, 2.4);
+    leftLight.position.set(-3.2, 0.5, 1.6);
     scene.add(leftLight);
 
-    const rightLight = new THREE.DirectionalLight(0xffffff, 1.1);
-    rightLight.position.set(2.5, 0.4, 1.2);
+    const rightLight = new THREE.DirectionalLight(0xffffff, 2.4);
+    rightLight.position.set(3.2, 0.5, 1.6);
     scene.add(rightLight);
 
-    const bottomLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    bottomLight.position.set(0, -2.0, 0.8);
+    const bottomLight = new THREE.DirectionalLight(0xffffff, 1.6);
+    bottomLight.position.set(0, -2.8, 1.2);
     scene.add(bottomLight);
-
-    const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 1.25);
-    scene.add(hemi);
 
     // ---------- tiny orbit controls (no OrbitControls import) ----------
     const state = {
@@ -160,7 +164,7 @@
       state.lastX = e.clientX;
       state.lastY = e.clientY;
 
-      // ✅ natural: drag right -> card turns right
+      // natural: drag right -> turn right
       state.yaw   -= dx * 0.007;
       state.pitch += dy * 0.007;
       state.pitch = clamp(state.pitch, -1.2, 0.9);
@@ -212,9 +216,14 @@
     const uniforms = {
       uFront:{value:null},
       uBack:{value:null},
-      uCorner:{value:0.075},
-      uTime:{value:0}
+      uCorner:{value:0.075}
     };
+
+    // Stronger studio “exposure” in shader:
+    // - gamma lift (pow < 1) brightens midtones
+    // - gain multiplies overall brightness
+    const STUDIO_GAMMA = 0.78;  // lower = brighter (was 0.92)
+    const STUDIO_GAIN  = 1.45;  // higher = brighter (new)
 
     const frontMat = new THREE.ShaderMaterial({
       uniforms,
@@ -239,8 +248,10 @@
 
           vec3 base = texture2D(uFront, vUv).rgb;
 
-          // ✅ studio gamma lift (subtle midtone boost)
-          base = pow(base, vec3(0.92));
+          // ✅ big studio lift:
+          base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
+          base *= ${STUDIO_GAIN.toFixed(4)};
+          base = clamp(base, 0.0, 1.0);
 
           gl_FragColor = vec4(base, 1.0);
         }
@@ -271,8 +282,10 @@
 
           vec3 base = texture2D(uBack, vUv).rgb;
 
-          // ✅ studio gamma lift
-          base = pow(base, vec3(0.92));
+          // ✅ big studio lift:
+          base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
+          base *= ${STUDIO_GAIN.toFixed(4)};
+          base = clamp(base, 0.0, 1.0);
 
           gl_FragColor = vec4(base, 1.0);
         }
@@ -302,7 +315,6 @@
           t.colorSpace = THREE.SRGBColorSpace;
           t.anisotropy = 8;
           t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-          // keep default flipY=true (works with vUv = uv)
           resolve(t);
         }, undefined, ()=>reject(new Error('Failed to load: ' + url)));
       });
@@ -352,10 +364,8 @@
     });
 
     // ---------- animate ----------
-    const clock = new THREE.Clock();
     function animate(){
       requestAnimationFrame(animate);
-      uniforms.uTime.value = clock.getElapsedTime();
       updateCamera();
       renderer.render(scene, camera);
     }
