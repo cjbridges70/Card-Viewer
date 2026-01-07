@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Card Viewer (Studio • Real Foil • Height • Mask)</title>
+  <title>Card Viewer (Fine Texture + Reactive Foil + Region Angles)</title>
   <style>
     html,body{height:100%;margin:0;overflow:hidden;background:#0b0e12;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     #hud{position:fixed;left:12px;top:12px;right:12px;z-index:10;display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:#e7eefc;}
@@ -17,7 +17,7 @@
     button{cursor:pointer}
     #status{margin-left:auto;opacity:.9}
     #log{
-      position:fixed;left:12px;bottom:12px;width:min(900px,calc(100% - 24px));
+      position:fixed;left:12px;bottom:12px;width:min(980px,calc(100% - 24px));
       max-height:35vh;overflow:auto;white-space:pre-wrap;
       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.25;
       color:#e7eefc;background:rgba(9,12,16,.72);border:1px solid rgba(255,255,255,.10);
@@ -45,15 +45,14 @@
 
     <div class="pill">
       <label><span class="small">Front</span><input id="frontFile" type="file" accept="image/*"></label>
-      <label><span class="small">Height</span><input id="heightFile" type="file" accept="image/*"></label>
+      <label><span class="small">Texture map</span><input id="heightFile" type="file" accept="image/*"></label>
       <label><span class="small">Mask</span><input id="maskFile" type="file" accept="image/*"></label>
     </div>
 
     <div class="pill">
       <label><input id="useHolo" type="checkbox" checked><span class="small">Holo (front)</span></label>
-      <label><input id="useEmboss" type="checkbox" checked><span class="small">Emboss</span></label>
-      <label><input id="useAutoHeight" type="checkbox" checked><span class="small">Auto-height</span></label>
-      <label><input id="useAutoMask" type="checkbox" checked><span class="small">Auto-mask Pokémon</span></label>
+      <label><input id="useAutoHeight" type="checkbox" checked><span class="small">Auto texture map</span></label>
+      <label><input id="useAutoMask" type="checkbox" checked><span class="small">Mask Pokémon out of holo</span></label>
     </div>
 
     <div id="status" class="pill">Booting…</div>
@@ -83,7 +82,6 @@
       heightFile: document.getElementById('heightFile'),
       maskFile: document.getElementById('maskFile'),
       useHolo: document.getElementById('useHolo'),
-      useEmboss: document.getElementById('useEmboss'),
       useAutoHeight: document.getElementById('useAutoHeight'),
       useAutoMask: document.getElementById('useAutoMask'),
     };
@@ -96,10 +94,8 @@
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.NoToneMapping; // studio pipeline
+    renderer.toneMapping = THREE.NoToneMapping;
     document.body.appendChild(renderer.domElement);
-
-    const MAX_ANISO = Math.min(16, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 8);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0b0e12);
@@ -107,7 +103,7 @@
     const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.01, 50);
     camera.position.set(0, 0.06, 1.9);
 
-    // ---------------- studio lighting ----------------
+    // Studio lighting baseline (kept)
     scene.add(new THREE.AmbientLight(0xffffff, 2.2));
     scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 2.6));
 
@@ -118,7 +114,11 @@
     const bottomLight = new THREE.DirectionalLight(0xffffff, 1.6); bottomLight.position.set(0, -2.8, 1.2); scene.add(bottomLight);
 
     // ---------------- tiny orbit controls ----------------
-    const state = { target:new THREE.Vector3(0,0.02,0), yaw:0.35, pitch:-0.10, dist:1.9, dragging:false, lastX:0, lastY:0, pinchDist:0 };
+    const state = {
+      target: new THREE.Vector3(0, 0.02, 0),
+      yaw: 0.35, pitch: -0.10, dist: 1.9,
+      dragging:false, lastX:0, lastY:0, pinchDist:0
+    };
     function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
     function updateCamera(){
       const cp=Math.cos(state.pitch), sp=Math.sin(state.pitch);
@@ -172,7 +172,8 @@
     }
 
     function scaleCanvasMax(src, maxDim){
-      const w = src.width, h = src.height, m = Math.max(w,h);
+      const w = src.width, h = src.height;
+      const m = Math.max(w,h);
       if(m <= maxDim) return src;
       const s = maxDim / m;
       const c = document.createElement('canvas');
@@ -189,147 +190,12 @@
       const t = new THREE.CanvasTexture(c);
       t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      t.anisotropy = MAX_ANISO;
+      t.anisotropy = 8;
       t.needsUpdate = true;
       return t;
     }
 
-    // ---------------- unique, image-guided auto height (MORE visible) ----------------
-    // Uses broad structure + edges + domain-warped fbm detail. Contrast boosted.
-    function makeAutoHeight(srcCanvas) {
-      const maxDim = (Math.max(window.innerWidth, window.innerHeight) < 900) ? 1536 : 2048;
-      const c0 = scaleCanvasMax(srcCanvas, maxDim);
-      const w = c0.width, h = c0.height;
-      const ctx = c0.getContext('2d', { willReadFrequently:true });
-      const img = ctx.getImageData(0,0,w,h);
-      const d = img.data;
-
-      const L = new Float32Array(w*h);
-      const S = new Float32Array(w*h);
-
-      for (let i=0,p=0;i<L.length;i++,p+=4){
-        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
-        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-        L[i]=0.2126*r + 0.7152*g + 0.0722*b;
-        S[i]=(mx<=1e-5)?0:((mx-mn)/mx);
-      }
-
-      function blurSeparable(src, rad){
-        const tmp = new Float32Array(w*h);
-        const out = new Float32Array(w*h);
-        // horizontal
-        for (let y=0;y<h;y++){
-          let sum=0;
-          const row=y*w;
-          for(let x=-rad;x<=rad;x++){
-            const xx=Math.max(0,Math.min(w-1,x));
-            sum += src[row+xx];
-          }
-          for(let x=0;x<w;x++){
-            out[row+x]=sum/(rad*2+1);
-            const x0=x-rad, x1=x+rad+1;
-            const a=src[row+Math.max(0,Math.min(w-1,x0))];
-            const b=src[row+Math.max(0,Math.min(w-1,x1))];
-            sum += b-a;
-          }
-        }
-        // vertical
-        for (let x=0;x<w;x++){
-          let sum=0;
-          for(let y=-rad;y<=rad;y++){
-            const yy=Math.max(0,Math.min(h-1,y));
-            sum += out[yy*w+x];
-          }
-          for(let y=0;y<h;y++){
-            tmp[y*w+x]=sum/(rad*2+1);
-            const y0=y-rad, y1=y+rad+1;
-            const a=out[Math.max(0,Math.min(h-1,y0))*w+x];
-            const b=out[Math.max(0,Math.min(h-1,y1))*w+x];
-            sum += b-a;
-          }
-        }
-        return tmp;
-      }
-
-      const broad = blurSeparable(L, 6);
-      const mid   = blurSeparable(L, 2);
-
-      const edge = new Float32Array(w*h);
-      for (let y=1;y<h-1;y++){
-        for (let x=1;x<w-1;x++){
-          const i=y*w+x;
-          const gx = mid[i+1] - mid[i-1];
-          const gy = mid[i+w] - mid[i-w];
-          edge[i] = Math.min(1, Math.sqrt(gx*gx + gy*gy) * 2.2);
-        }
-      }
-
-      function fract(x){ return x - Math.floor(x); }
-      function hash(n){ return fract(Math.sin(n)*43758.5453123); }
-      function h2(x,y){ return hash(x*127.1 + y*311.7); }
-      function noise(x,y){
-        const ix = Math.floor(x), iy = Math.floor(y);
-        const fx = x - ix, fy = y - iy;
-        const a = h2(ix,iy), b = h2(ix+1,iy), c = h2(ix,iy+1), d0 = h2(ix+1,iy+1);
-        const ux = fx*fx*(3-2*fx), uy = fy*fy*(3-2*fy);
-        return a*(1-ux)*(1-uy) + b*ux*(1-uy) + c*(1-ux)*uy + d0*ux*uy;
-      }
-      function fbm(x,y){
-        let v=0, a=0.5, f=1.0;
-        for(let k=0;k<5;k++){ v += a*noise(x*f,y*f); f*=2.02; a*=0.52; }
-        return v;
-      }
-
-      const out = document.createElement('canvas');
-      out.width=w; out.height=h;
-      const octx = out.getContext('2d', { willReadFrequently:true });
-      const outImg = octx.createImageData(w,h);
-      const od = outImg.data;
-
-      // per-image seed
-      let seed = 0;
-      for (let i=0;i<Math.min(5000, L.length); i+=41) seed += L[i]*997.0 + S[i]*331.0;
-      seed = (seed % 1000) * 0.001;
-
-      for(let y=0;y<h;y++){
-        for(let x=0;x<w;x++){
-          const i=y*w+x;
-
-          const b = broad[i];
-          const e = edge[i];
-          const sat = S[i];
-
-          // warp based on image broad luminance so it "follows" art
-          const wx = (b - 0.5) * 2.6;
-          const wy = (mid[i] - 0.5) * 2.6;
-
-          const xx = (x / w) * 6.2 + wx + seed;
-          const yy = (y / h) * 6.2 + wy - seed;
-
-          const detail = fbm(xx, yy);
-          const grain  = fbm(xx*9.0, yy*9.0);
-
-          // ridge-ish variant adds “pressed” feel
-          const ridged = 1.0 - Math.abs(detail*2.0 - 1.0);
-
-          // Combine: more visible
-          let v = 0.56*b + 0.30*e + 0.10*(detail - 0.5) + 0.04*(ridged - 0.5);
-          v += (grain - 0.5) * (0.14 + 0.26*(1.0 - sat));
-
-          // stronger contrast
-          v = (v - 0.35) * 1.85 + 0.35;
-          v = Math.max(0, Math.min(1, v));
-
-          const g = Math.round(v*255);
-          const p=i*4;
-          od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
-        }
-      }
-      octx.putImageData(outImg,0,0);
-      return out;
-    }
-
-    // ---------------- auto mask (same heuristic) ----------------
+    // ---------------- auto mask (Pokémon foreground) ----------------
     function makeAutoMask(srcCanvas){
       const c0 = scaleCanvasMax(srcCanvas, 768);
       const w = c0.width, h = c0.height;
@@ -382,6 +248,7 @@
       }
 
       const bl = blurSeparable(lum, 2);
+
       const edge = new Float32Array(w*h);
       for (let y=1;y<h-1;y++){
         for (let x=1;x<w-1;x++){
@@ -397,7 +264,7 @@
         for (let x=0;x<w;x++){
           const i=y*w+x;
           const u = x/(w-1), v = y/(h-1);
-          const cx = u-0.5, cy = v-0.45;
+          const cx = u-0.5, cy = v-0.45; // favor upper-center
           const center = Math.exp(-(cx*cx*2.0 + cy*cy*3.0));
           score[i] = center * (0.70*edge[i] + 0.30*sat[i]);
         }
@@ -434,31 +301,343 @@
         od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
       }
       octx.putImageData(outImg,0,0);
+      return out; // 1=foreground
+    }
+
+    // ---------------- AUTO "REGION ORIENTATION MAP" ----------------
+    // Lightweight segmentation (k-means on RGB+position) → gives object-like regions.
+    // Then compute a dominant orientation per region using a structure-tensor idea.
+    //
+    // Output texture channels:
+    //   R,G = cos/sin(theta) mapped to 0..1
+    //   B   = coherence (0..1)  (how directional the region is)
+    //   A   = region random (0..1) (for phase/hue variety)
+    function makeRegionOrientationMap(srcCanvas){
+      const c0 = scaleCanvasMax(srcCanvas, 260); // keeps it fast
+      const w = c0.width, h = c0.height;
+      const ctx = c0.getContext('2d', { willReadFrequently:true });
+      const img = ctx.getImageData(0,0,w,h);
+      const d = img.data;
+
+      const N = w*h;
+      const rgb = new Float32Array(N*3);
+      const lum = new Float32Array(N);
+
+      for(let i=0, p=0;i<N;i++, p+=4){
+        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
+        rgb[i*3+0]=r; rgb[i*3+1]=g; rgb[i*3+2]=b;
+        lum[i]=0.2126*r + 0.7152*g + 0.0722*b;
+      }
+
+      // K-means on [r,g,b, u*s, v*s] (encourages spatially coherent regions)
+      const K = 10;
+      const spos = 0.35;
+
+      const cx = new Float32Array(K*5);
+      const count = new Int32Array(K);
+
+      // init centers using random pixels
+      for(let k=0;k<K;k++){
+        const i = Math.floor((Math.sin((k+1)*999.1)*0.5+0.5) * (N-1));
+        const x = i % w, y = (i / w) | 0;
+        cx[k*5+0]=rgb[i*3+0];
+        cx[k*5+1]=rgb[i*3+1];
+        cx[k*5+2]=rgb[i*3+2];
+        cx[k*5+3]=(x/(w-1))*spos;
+        cx[k*5+4]=(y/(h-1))*spos;
+      }
+
+      const labels = new Uint8Array(N);
+
+      function dist5(k, r,g,b, u,v){
+        const dx0=r-cx[k*5+0], dx1=g-cx[k*5+1], dx2=b-cx[k*5+2], dx3=u-cx[k*5+3], dx4=v-cx[k*5+4];
+        return dx0*dx0 + dx1*dx1 + dx2*dx2 + dx3*dx3 + dx4*dx4;
+      }
+
+      const iters = 6;
+      for(let it=0; it<iters; it++){
+        // reset accumulators
+        for(let k=0;k<K;k++){ count[k]=0; cx[k*5+0]=cx[k*5+0]; } // keep centers array allocated
+        const sum = new Float32Array(K*5);
+
+        for(let y=0;y<h;y++){
+          const v = (y/(h-1))*spos;
+          for(let x=0;x<w;x++){
+            const u = (x/(w-1))*spos;
+            const i = y*w+x;
+            const r=rgb[i*3+0], g=rgb[i*3+1], b=rgb[i*3+2];
+
+            let bestK=0;
+            let bestD=1e9;
+            for(let k=0;k<K;k++){
+              const dd = dist5(k,r,g,b,u,v);
+              if(dd<bestD){ bestD=dd; bestK=k; }
+            }
+            labels[i]=bestK;
+            count[bestK]++;
+            sum[bestK*5+0]+=r;
+            sum[bestK*5+1]+=g;
+            sum[bestK*5+2]+=b;
+            sum[bestK*5+3]+=u;
+            sum[bestK*5+4]+=v;
+          }
+        }
+
+        // update centers
+        for(let k=0;k<K;k++){
+          const c = Math.max(1, count[k]);
+          cx[k*5+0]=sum[k*5+0]/c;
+          cx[k*5+1]=sum[k*5+1]/c;
+          cx[k*5+2]=sum[k*5+2]/c;
+          cx[k*5+3]=sum[k*5+3]/c;
+          cx[k*5+4]=sum[k*5+4]/c;
+        }
+      }
+
+      // one small majority filter to reduce speckles
+      const labels2 = new Uint8Array(N);
+      for(let y=1;y<h-1;y++){
+        for(let x=1;x<w-1;x++){
+          const i=y*w+x;
+          const a0=labels[i], a1=labels[i-1], a2=labels[i+1], a3=labels[i-w], a4=labels[i+w];
+          // pick the mode of 5 (cheap)
+          let mode=a0, best=1;
+          function test(v){
+            let c=0;
+            if(a0===v) c++; if(a1===v) c++; if(a2===v) c++; if(a3===v) c++; if(a4===v) c++;
+            if(c>best){ best=c; mode=v; }
+          }
+          test(a1); test(a2); test(a3); test(a4);
+          labels2[i]=mode;
+        }
+      }
+      // borders copy
+      for(let x=0;x<w;x++){ labels2[x]=labels[x]; labels2[(h-1)*w+x]=labels[(h-1)*w+x]; }
+      for(let y=0;y<h;y++){ labels2[y*w]=labels[y*w]; labels2[y*w+(w-1)]=labels[y*w+(w-1)]; }
+
+      // compute per-cluster structure tensor from luminance gradients
+      const Jxx = new Float32Array(K);
+      const Jyy = new Float32Array(K);
+      const Jxy = new Float32Array(K);
+
+      for(let y=1;y<h-1;y++){
+        for(let x=1;x<w-1;x++){
+          const i=y*w+x;
+          const k = labels2[i];
+
+          const gx = lum[i+1]-lum[i-1];
+          const gy = lum[i+w]-lum[i-w];
+          const wgt = Math.sqrt(gx*gx+gy*gy);
+
+          // weight by gradient magnitude so flat areas don't dominate
+          const gxx=gx*gx*wgt;
+          const gyy=gy*gy*wgt;
+          const gxy=gx*gy*wgt;
+
+          Jxx[k]+=gxx;
+          Jyy[k]+=gyy;
+          Jxy[k]+=gxy;
+        }
+      }
+
+      const theta = new Float32Array(K);
+      const coh = new Float32Array(K);
+      const rand = new Float32Array(K);
+
+      for(let k=0;k<K;k++){
+        const a = Jxx[k], b = Jxy[k], c = Jyy[k];
+        // theta = 0.5*atan2(2b, a-c)
+        theta[k] = 0.5*Math.atan2(2*b, a - c);
+        // coherence ~ sqrt((a-c)^2 + 4b^2)/(a+c)
+        const num = Math.sqrt((a-c)*(a-c) + 4*b*b);
+        const den = (a+c) + 1e-6;
+        coh[k] = Math.max(0, Math.min(1, num/den));
+        // stable random per cluster
+        const r = Math.sin((k+1)*12.9898 + theta[k]*78.233) * 43758.5453;
+        rand[k] = r - Math.floor(r);
+      }
+
+      // write orientation texture
+      const out = document.createElement('canvas');
+      out.width=w; out.height=h;
+      const octx = out.getContext('2d', { willReadFrequently:true });
+      const outImg = octx.createImageData(w,h);
+      const od = outImg.data;
+
+      for(let i=0;i<N;i++){
+        const k = labels2[i];
+        const ct = Math.cos(theta[k]);
+        const st = Math.sin(theta[k]);
+        const R = (ct*0.5+0.5);
+        const G = (st*0.5+0.5);
+        const B = coh[k];
+        const A = rand[k];
+        const p=i*4;
+        od[p]   = Math.round(R*255);
+        od[p+1] = Math.round(G*255);
+        od[p+2] = Math.round(B*255);
+        od[p+3] = Math.round(A*255);
+      }
+
+      octx.putImageData(outImg,0,0);
       return out;
     }
 
-    // ---------------- constants (locked corners + studio brightness) ----------------
+    // ---------------- Auto "texture strength" map (FAST + fine) ----------------
+    // This is NOT emboss. It’s a modulation map that tells the shader where foil/microtexture should be stronger.
+    function makeAutoTextureMap(srcCanvas, maskCanvas=null){
+      const c0 = scaleCanvasMax(srcCanvas, 1024);
+      const w = c0.width, h = c0.height;
+      const ctx = c0.getContext('2d', { willReadFrequently:true });
+      const img = ctx.getImageData(0,0,w,h);
+      const d = img.data;
+
+      // optional mask (flatten Pokémon)
+      let M = null;
+      if(maskCanvas){
+        const mc = document.createElement('canvas');
+        mc.width=w; mc.height=h;
+        const mctx = mc.getContext('2d', { willReadFrequently:true });
+        mctx.imageSmoothingEnabled = true;
+        mctx.imageSmoothingQuality = 'high';
+        mctx.drawImage(maskCanvas, 0, 0, w, h);
+        const md = mctx.getImageData(0,0,w,h).data;
+        M = new Float32Array(w*h);
+        for(let i=0,p=0;i<M.length;i++,p+=4) M[i]=md[p]/255;
+      }
+
+      const L = new Float32Array(w*h);
+      const S = new Float32Array(w*h);
+      for(let i=0,p=0;i<L.length;i++,p+=4){
+        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
+        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+        L[i]=0.2126*r + 0.7152*g + 0.0722*b;
+        S[i]=(mx<=1e-5)?0:((mx-mn)/mx);
+      }
+
+      function blurSeparable(src, rad){
+        const tmp = new Float32Array(w*h);
+        const out = new Float32Array(w*h);
+        for (let y=0;y<h;y++){
+          let sum=0;
+          const row=y*w;
+          for(let x=-rad;x<=rad;x++){
+            const xx=Math.max(0,Math.min(w-1,x));
+            sum += src[row+xx];
+          }
+          for(let x=0;x<w;x++){
+            out[row+x]=sum/(rad*2+1);
+            const x0=x-rad, x1=x+rad+1;
+            const a=src[row+Math.max(0,Math.min(w-1,x0))];
+            const b=src[row+Math.max(0,Math.min(w-1,x1))];
+            sum += b-a;
+          }
+        }
+        for (let x=0;x<w;x++){
+          let sum=0;
+          for(let y=-rad;y<=rad;y++){
+            const yy=Math.max(0,Math.min(h-1,y));
+            sum += out[yy*w+x];
+          }
+          for(let y=0;y<h;y++){
+            tmp[y*w+x]=sum/(rad*2+1);
+            const y0=y-rad, y1=y+rad+1;
+            const a=out[Math.max(0,Math.min(h-1,y0))*w+x];
+            const b=out[Math.max(0,Math.min(h-1,y1))*w+x];
+            sum += b-a;
+          }
+        }
+        return tmp;
+      }
+
+      const b1 = blurSeparable(L, 1);
+      const b4 = blurSeparable(L, 4);
+
+      // high-pass = fine detail energy
+      const hp = new Float32Array(w*h);
+      for(let i=0;i<hp.length;i++){
+        hp[i] = Math.abs(b1[i]-b4[i]);
+      }
+
+      // edge magnitude from b1
+      const edge = new Float32Array(w*h);
+      for (let y=1;y<h-1;y++){
+        for (let x=1;x<w-1;x++){
+          const i=y*w+x;
+          const gx = b1[i+1]-b1[i-1];
+          const gy = b1[i+w]-b1[i-w];
+          edge[i] = Math.min(1, Math.sqrt(gx*gx+gy*gy)*2.0);
+        }
+      }
+
+      // cheap hash noise (dither) so it doesn’t band
+      function fract(x){ return x - Math.floor(x); }
+      function hash(x,y){ return fract(Math.sin(x*127.1 + y*311.7) * 43758.5453); }
+
+      const out = document.createElement('canvas');
+      out.width=w; out.height=h;
+      const octx = out.getContext('2d', { willReadFrequently:true });
+      const outImg = octx.createImageData(w,h);
+      const od = outImg.data;
+
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          const i=y*w+x;
+
+          const invSat = 1.0 - S[i]; // flatter areas get more texture
+          let v = 0.45;
+
+          // fine emphasis
+          v += hp[i]*1.35;
+          v += edge[i]*0.45;
+          v += invSat*0.25;
+
+          // tiny dither
+          v += (hash(x,y)-0.5)*0.06;
+
+          // flatten Pokémon foreground if we have a mask
+          if(M){
+            const fg = M[i]; // 1=Pokémon
+            v = v*(1.0 - 0.75*fg) + 0.50*(0.75*fg);
+          }
+
+          v = Math.max(0, Math.min(1, v));
+          const g = Math.round(v*255);
+          const p=i*4;
+          od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
+        }
+      }
+
+      octx.putImageData(outImg,0,0);
+      return out;
+    }
+
+    // ---------------- shader constants ----------------
     const CORNER = 0.044;
+
+    // brightness (confirmed)
     const STUDIO_GAMMA = 0.78;
     const STUDIO_GAIN  = 1.45;
 
-    // ---------------- "make texture visible" knobs ----------------
-    const EMBOSS_NORMAL_STRENGTH = 0.055; // tangent-space normal strength (bigger = more visible)
-    const EMBOSS_AO_STRENGTH     = 0.010; // subtle valley shading
-    const CLEARCOAT_INTENSITY    = 0.16;  // glossy finish over the whole card front
+    // FINE microtexture: shows up via reflection, not by darkening the art
+    const MICRO_STRENGTH = 0.000050;  // increase slightly if you want more visible micro texture
+    const MICRO_FREQ_MIN = 260.0;
+    const MICRO_FREQ_MAX = 420.0;
 
-    // ---------------- holo realism knobs ----------------
-    const HOLO_INTENSITY   = 3.05;  // stronger foil
-    const HOLO_BAND_W      = 0.26;  // wide bands
-    const HOLO_WARP        = 0.24;  // wavy
-    const HOLO_GRAIN       = 0.22;  // glitter (color)
-    const HOLO_REACT       = 1.45;  // reactiveness to movement
-    const HOLO_PARALLAX    = 0.040; // slight slide with tilt
-    const FOIL_REFLECT     = 1.10;  // reflection strength
-    const FOIL_SPEC_POWER  = 140.0; // sharp foil highlight
-    const FOIL_SPEC_GAIN   = 1.45;  // foil highlight strength
+    // paper clearcoat + foil flash
+    const PAPER_GLOSS = 0.10;
+    const FOIL_GLOSS  = 0.72;
 
-    // ---------------- shader helpers ----------------
+    // holo look (keep your wavy vibe but more “foil”)
+    const HOLO_INTENSITY = 3.15;
+    const HOLO_BAND_W    = 0.26;
+    const HOLO_WARP      = 0.22;
+    const HOLO_GRAIN     = 0.28;
+
+    // reactive to motion
+    const HOLO_REACT     = 1.65;
+    const HOLO_PARALLAX  = 0.045;
+
     const roundedRectGLSL = `
       float roundedMask(vec2 uv, float r){
         vec2 p = uv * 2.0 - 1.0;
@@ -469,66 +648,85 @@
       }
     `;
 
+    // ---------------- uniforms ----------------
     const uniforms = {
       uFront: { value: null },
       uBack:  { value: null },
+
+      // "texture strength" map (0..1). Can be uploaded or auto generated.
       uHeight:{ value: null },
-      uMask:  { value: null },
       uHasHeight:{ value: 0.0 },
+
+      // Pokémon mask (1=foreground)
+      uMask:  { value: null },
       uHasMask:  { value: 0.0 },
 
-      // correct texel size makes emboss consistent at any resolution
-      uHeightTexel: { value: new THREE.Vector2(1/1024, 1/1024) },
+      // region orientation map (RG=cos/sin, B=coh, A=random)
+      uOrient: { value: null },
+      uHasOrient: { value: 0.0 },
 
       uUseHolo:   { value: 1.0 },
-      uUseEmboss: { value: 1.0 },
       uUseMask:   { value: 1.0 },
 
       uCorner: { value: CORNER },
       uTime:   { value: 0.0 },
 
-      // one "key" light direction for spec/foil response
-      uLightDir: { value: new THREE.Vector3(0.20, 0.85, 0.50).normalize() }
+      // moving "softbox" direction so reflections react
+      uSoftDir: { value: new THREE.Vector3(0.0, 0.85, 0.55).normalize() }
     };
 
+    // ---------------- shaders ----------------
     const cardVS = `
       varying vec2 vUv;
       varying vec3 vN;
       varying vec3 vV;
+      varying vec3 vT;
+      varying vec3 vB;
       void main(){
         vUv = uv;
+
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vN = normalize(mat3(modelMatrix) * normal);
         vV = normalize(cameraPosition - wp.xyz);
+
+        // World-space basis for UV axes (plane local X/Y)
+        vT = normalize(mat3(modelMatrix) * vec3(1.0, 0.0, 0.0));
+        vB = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
+
         gl_Position = projectionMatrix * viewMatrix * wp;
       }
     `;
 
     const frontFS = `
       precision highp float;
+
       varying vec2 vUv;
       varying vec3 vN;
       varying vec3 vV;
+      varying vec3 vT;
+      varying vec3 vB;
 
       uniform sampler2D uFront;
-      uniform sampler2D uHeight;
-      uniform sampler2D uMask;
 
+      uniform sampler2D uHeight;
       uniform float uHasHeight;
+
+      uniform sampler2D uMask;
       uniform float uHasMask;
-      uniform vec2  uHeightTexel;
+
+      uniform sampler2D uOrient;
+      uniform float uHasOrient;
 
       uniform float uUseHolo;
-      uniform float uUseEmboss;
       uniform float uUseMask;
 
       uniform float uCorner;
       uniform float uTime;
-      uniform vec3  uLightDir;
+
+      uniform vec3 uSoftDir;
 
       ${roundedRectGLSL}
 
-      float saturate(float x){ return clamp(x, 0.0, 1.0); }
       float fractf(float x){ return x - floor(x); }
       float hash(vec2 p){ return fractf(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
       float noise(vec2 p){
@@ -550,167 +748,149 @@
         ), 0.0, 1.0);
       }
 
-      vec3 envFromR(vec3 R){
-        // simple "studio environment": darker floor, bright ceiling
-        vec3 sky    = vec3(1.0, 1.0, 1.0);
-        vec3 ground = vec3(0.08, 0.09, 0.10);
-        float t = saturate(R.y*0.5 + 0.5);
-        vec3 env = mix(ground, sky, pow(t, 1.35));
-
-        // two softbox panels (bright rectangles) that move with reflection direction
-        vec3 sd1 = normalize(vec3(0.00, 0.58, 0.82));
-        vec3 sd2 = normalize(vec3(-0.35, 0.78, 0.52));
-        float p1 = pow(max(dot(R, sd1), 0.0), 18.0);
-        float p2 = pow(max(dot(R, sd2), 0.0), 24.0);
-        env += vec3(1.0) * (p1*1.25 + p2*0.95);
-        return env;
-      }
-
       void main(){
         float inside = roundedMask(vUv, uCorner);
         if(inside < 0.5) discard;
 
-        // base color
         vec3 base = texture2D(uFront, vUv).rgb;
+
+        // studio lift
         base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
         base *= ${STUDIO_GAIN.toFixed(4)};
         base = clamp(base, 0.0, 1.0);
 
-        vec3 N0 = normalize(vN);
-        vec3 V  = normalize(vV);
-
-        // tangent basis from normal
-        vec3 up = (abs(N0.y) < 0.999) ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0);
-        vec3 T = normalize(cross(up, N0));
-        vec3 B = cross(N0, T);
-
-        // height + mask
-        vec2 uvH = vUv;
-        float h = 0.5;
-        if(uHasHeight > 0.5){
-          h = texture2D(uHeight, uvH).r;
-        }
-
+        // mask: 1=Pokémon/foreground, reduce holo there
         float m = 0.0;
         if(uHasMask > 0.5 && uUseMask > 0.5){
-          m = texture2D(uMask, vUv).r; // 1=Pokémon (no holo)
+          m = texture2D(uMask, vUv).r;
         }
-        // smoother mask: 0=full foil, 1=no foil
-        float maskNoFoil = (uHasMask > 0.5 && uUseMask > 0.5) ? smoothstep(0.25, 0.90, m) : 0.0;
-        float maskFoil = 1.0 - maskNoFoil;
+        float maskMod = 1.0 - clamp(m*1.15, 0.0, 1.0);
 
-        // emboss normal from height (tangent-space), resolution independent
-        vec3 N = N0;
-        float ao = 1.0;
-
-        if(uUseEmboss > 0.5 && uHasHeight > 0.5){
-          vec2 e = max(uHeightTexel, vec2(1.0/4096.0));
-
-          // multi-scale slope (fine + coarse)
-          float hx1 = texture2D(uHeight, uvH + vec2(e.x, 0.0)).r;
-          float hy1 = texture2D(uHeight, uvH + vec2(0.0, e.y)).r;
-          vec2 d1 = vec2((hx1 - h)/e.x, (hy1 - h)/e.y);
-
-          vec2 e2 = e * 4.0;
-          float hx2 = texture2D(uHeight, uvH + vec2(e2.x, 0.0)).r;
-          float hy2 = texture2D(uHeight, uvH + vec2(0.0, e2.y)).r;
-          vec2 d2 = vec2((hx2 - h)/e2.x, (hy2 - h)/e2.y);
-
-          vec2 dHd = d1*0.78 + d2*0.22;
-
-          // tangent-space normal from height slope
-          vec3 nTS = normalize(vec3(-dHd.x * ${EMBOSS_NORMAL_STRENGTH.toFixed(5)},
-                                   -dHd.y * ${EMBOSS_NORMAL_STRENGTH.toFixed(5)},
-                                    1.0));
-
-          // transform to world
-          N = normalize(T*nTS.x + B*nTS.y + N0*nTS.z);
-
-          // tiny AO from slope magnitude (makes texture read better)
-          float slope = length(dHd);
-          ao = clamp(1.0 - slope * ${EMBOSS_AO_STRENGTH.toFixed(5)}, 0.85, 1.0);
+        // texture strength map (0..1): modulates how strong micro/foil is
+        float surf = 1.0;
+        if(uHasHeight > 0.5){
+          float h = texture2D(uHeight, vUv).r;
+          surf = clamp(0.65 + (h - 0.5) * 1.6, 0.25, 1.75);
         }
 
-        // subtle diffuse response (don’t over-shade printed art)
-        vec3 L = normalize(uLightDir);
-        float ndl = saturate(dot(N, L)*0.45 + 0.55);
-        base *= mix(0.99, 1.08, ndl);
-        base *= ao;
+        // region orientation map
+        vec4 o = vec4(0.5, 0.5, 0.0, 0.5);
+        if(uHasOrient > 0.5){
+          o = texture2D(uOrient, vUv);
+        }
+        vec2 dir = o.rg * 2.0 - 1.0;
+        float lenD = max(1e-4, length(dir));
+        dir /= lenD;
+        float coh = o.b;   // 0..1 (directionality)
+        float reg = o.a;   // 0..1 (region random)
 
-        // reflection vectors
-        float NoV = saturate(dot(N, V));
-        vec3 R = reflect(-V, N);
-        vec3 env = envFromR(R);
+        vec2 orth = vec2(-dir.y, dir.x);
 
-        // clearcoat gloss across whole front (subtle)
-        float Fc = pow(1.0 - NoV, 5.0);
-        vec3 clear = env * (0.04 + 0.96*Fc) * ${CLEARCOAT_INTENSITY.toFixed(4)};
-        // screen blend so it behaves like glare
-        base = 1.0 - (1.0 - base) * (1.0 - clear);
+        // ---------------- FINE MICROTEXTURE NORMAL ----------------
+        // This replaces "emboss": it only affects reflections/foil highlights,
+        // not the artwork shading itself (more realistic).
+        vec3 N = normalize(vN);
+        vec3 V = normalize(vV);
 
-        // HOLO FOIL (front only)
+        // slow variation so it doesn't look tiled
+        float n0 = noise(vUv*6.0 + reg*13.0);
+        float freq = mix(${MICRO_FREQ_MIN.toFixed(1)}, ${MICRO_FREQ_MAX.toFixed(1)}, n0);
+
+        // micro grooves (two-direction mix)
+        float s = dot(vUv, dir);
+        float t = dot(vUv, orth);
+
+        float a1 = 6.2831*(s*freq + reg*6.0);
+        float a2 = 6.2831*(t*(freq*0.35) + reg*11.0);
+
+        float w1 = 0.78;
+        float w2 = 0.22;
+
+        // derivative of sin(...) w.r.t uv is dir*(cos*2π*freq)
+        float d1 = cos(a1) * 6.2831 * freq * w1;
+        float d2 = cos(a2) * 6.2831 * (freq*0.35) * w2;
+
+        vec2 gradUv = dir*d1 + orth*d2;
+
+        // strength: stronger in background + more in coherent regions + modulated by surf map
+        float microAmp = ${MICRO_STRENGTH.toFixed(6)} * surf * (0.35 + 0.65*coh) * (0.35 + 0.65*maskMod);
+
+        // convert uv-gradient into world-space using uv axes basis
+        vec3 Nmicro = normalize(N + (vT*gradUv.x + vB*gradUv.y) * microAmp);
+
+        // ---------------- REFLECTIONS ----------------
+        vec3 R = reflect(-V, Nmicro);
+        float fres = pow(1.0 - clamp(dot(Nmicro, V), 0.0, 1.0), 2.05);
+
+        vec3 softDir = normalize(uSoftDir);
+        float sbWide = pow(max(dot(R, softDir), 0.0), 22.0);
+        float sbCore = pow(max(dot(R, softDir), 0.0), 120.0);
+        float softbox = sbWide*0.35 + sbCore*1.10;
+
+        // subtle paper clearcoat highlight (still shows micro texture!)
+        base += vec3(1.0) * softbox * ${PAPER_GLOSS.toFixed(4)} * (0.25 + 0.75*fres);
+        base = clamp(base, 0.0, 1.0);
+
+        // ---------------- HOLO FOIL ----------------
         if(uUseHolo > 0.5){
-          // view dir in tangent (for height parallax)
-          vec3 Vts = normalize(vec3(dot(V, T), dot(V, B), dot(V, N)));
-
-          // reactive tilt from reflection dir
+          // reactive tilt
           float tiltX = R.x;
           float tiltY = R.y;
-          float tilt = (tiltX*0.75 + tiltY*0.55);
+          float tilt  = tiltX*0.75 + tiltY*0.55;
 
-          // small parallax slide (tilt) + height-based parallax
-          float parH = (h - 0.5);
-          vec2 parallaxH = (Vts.xy / max(0.25, Vts.z)) * parH * 0.020; // height parallax
-          vec2 uvP = vUv
-                   + vec2(tiltX, tiltY) * ${HOLO_PARALLAX.toFixed(4)}
-                   + parallaxH;
+          // parallax
+          vec2 uvP = vUv + vec2(tiltX, tiltY) * ${HOLO_PARALLAX.toFixed(4)};
 
-          // wavy warp (keep your favorite look)
+          // keep wavy look
           float w = noise(uvP*8.0 + vec2(uTime*0.05, -uTime*0.04));
           float warp = (w - 0.5) * ${HOLO_WARP.toFixed(4)};
+          vec2 uvW = uvP + vec2(warp, warp*0.6);
 
-          // band phase reacts to tilt
-          float phase = uTime*0.22 + tilt * ${HOLO_REACT.toFixed(4)} + parH*1.25;
+          // band direction blends from a global direction into region direction
+          vec2 baseBandDir = normalize(vec2(0.25, 1.0));
+          vec2 bandDir = normalize(mix(baseBandDir, dir, 0.85*coh));
+          vec2 bandOrtho = vec2(-bandDir.y, bandDir.x);
 
-          float band = sin(((uvP.y + warp) * 10.0 + (uvP.x + warp) * 2.5) / max(0.001, ${HOLO_BAND_W.toFixed(4)}) + phase);
+          float bcoord  = dot(uvW, bandDir);
+          float bcoord2 = dot(uvW, bandOrtho);
+
+          float phase = (uTime*0.25) + tilt*${HOLO_REACT.toFixed(4)} + (reg - 0.5)*6.0;
+
+          float band = sin((bcoord*10.0 + bcoord2*2.5) / max(0.001, ${HOLO_BAND_W.toFixed(4)}) + phase);
           band = band * 0.5 + 0.5;
 
-          // fresnel for foil
-          float fres = pow(1.0 - NoV, 2.05);
+          // hue shift depends on tilt + region + groove direction (object-like refraction change)
+          vec3 bandDirW = normalize(vT*bandDir.x + vB*bandDir.y);
+          float groove = dot(R, bandDirW);
 
-          // iridescent interference color
-          float hueShift = tilt * 0.35 + R.z * 0.10;
-          vec3 irides = rainbow(band*0.65 + w*0.26 + fres*0.18 + hueShift);
+          float hueShift = tilt*0.38 + R.z*0.12 + groove*(0.38*coh) + (reg - 0.5)*0.35;
 
-          // static glitter (shows as you move due to fresnel/spec)
-          float n = noise(uvP*650.0);
-          float sparkle = smoothstep(0.93, 0.99, n) * (0.15 + 0.85*fres);
-          irides += sparkle * (irides*1.25 + vec3(1.0)) * ${HOLO_GRAIN.toFixed(4)};
+          vec3 holoCol = rainbow(band*0.70 + w*0.25 + fres*0.20 + hueShift);
 
-          // reflective foil base + tint
-          vec3 foilBase = env * (0.22 + 0.78*fres) * ${FOIL_REFLECT.toFixed(4)};
-          vec3 foil = mix(foilBase, foilBase*irides + irides*0.35, 0.78);
+          // grain / glitter
+          float g = noise(uvP*260.0 + uTime*0.18);
+          holoCol += (g - 0.5) * ${HOLO_GRAIN.toFixed(4)};
 
-          // sharp foil spec highlight
-          vec3 H = normalize(L + V);
-          float spec = pow(max(dot(N, H), 0.0), ${FOIL_SPEC_POWER.toFixed(1)}) * ${FOIL_SPEC_GAIN.toFixed(3)};
+          float glitter = smoothstep(0.80, 1.0, g) * clamp(softbox*1.4, 0.0, 1.0);
 
-          // overall foil amount (height makes it “read” more)
-          float heightMod = clamp(0.85 + parH*2.2, 0.0, 2.0);
-          float amt = ${HOLO_INTENSITY.toFixed(4)} * (0.10 + 0.72*fres) * heightMod;
+          // foil shows mostly when it catches the softbox (realistic), also modulated by surf
+          float catch = clamp(0.45 + 1.35*softbox + 0.25*fres, 0.0, 2.0);
 
-          // mask Pokémon out (maskFoil=1 is background, 0 is Pokémon)
-          amt *= maskFoil;
+          float holoAmt = ${HOLO_INTENSITY.toFixed(4)} * (0.08 + 0.62*fres) * catch * surf;
+          holoAmt *= maskMod;
 
-          // extra pop when tilted
-          float reactBoost = 0.80 + 0.60*abs(tilt);
+          base += holoCol * holoAmt;
 
-          // combine as screen blend (more realistic than pure add/clamp)
-          vec3 add = (foil * amt * reactBoost) + vec3(spec) * (0.18 + 0.75*fres) * amt * reactBoost;
-          base = 1.0 - (1.0 - base) * (1.0 - add);
+          // colored foil reflection (this is the “foil flash”)
+          base += holoCol * softbox * ${FOIL_GLOSS.toFixed(4)} * (0.35 + 0.85*fres) * maskMod * surf;
+
+          // sparkles in highlight
+          base += holoCol * glitter * 0.30 * maskMod * surf;
+
+          base = clamp(base, 0.0, 1.0);
         }
 
-        gl_FragColor = vec4(clamp(base, 0.0, 1.0), 1.0);
+        gl_FragColor = vec4(base, 1.0);
       }
     `;
 
@@ -723,12 +903,10 @@
       void main(){
         float inside = roundedMask(vUv, uCorner);
         if(inside < 0.5) discard;
-
         vec3 base = texture2D(uBack, vUv).rgb;
         base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
         base *= ${STUDIO_GAIN.toFixed(4)};
         base = clamp(base, 0.0, 1.0);
-
         gl_FragColor = vec4(base, 1.0);
       }
     `;
@@ -766,61 +944,79 @@
     group.rotation.x = -0.04;
     scene.add(group);
 
-    // ---------------- loading textures ----------------
+    // ---------------- texture loading ----------------
     const loader = new THREE.TextureLoader();
     function loadTex(url){
       return new Promise((resolve,reject)=>{
         loader.load(url, (t)=>{
           t.colorSpace = THREE.SRGBColorSpace;
+          t.anisotropy = 8;
           t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-          t.anisotropy = MAX_ANISO;
           resolve(t);
         }, undefined, ()=>reject(new Error('Failed to load: ' + url)));
       });
     }
 
-    async function setFrontFromCanvas(c){
+    let lastFrontCanvas = null;
+    let lastMaskCanvas = null;
+
+    function setFrontFromCanvas(c){
       uniforms.uFront.value = canvasToTexture(c, {srgb:true});
+      lastFrontCanvas = c;
     }
-    async function setHeightFromCanvas(c){
-      uniforms.uHeight.value = canvasToTexture(c, {srgb:false});
-      uniforms.uHasHeight.value = 1.0;
-      uniforms.uHeightTexel.value.set(1/c.width, 1/c.height);
-    }
-    async function setMaskFromCanvas(c){
+    function setMaskFromCanvas(c){
       uniforms.uMask.value = canvasToTexture(c, {srgb:false});
       uniforms.uHasMask.value = 1.0;
-    }
-    function clearHeight(){
-      uniforms.uHeight.value = null;
-      uniforms.uHasHeight.value = 0.0;
-      uniforms.uHeightTexel.value.set(1/1024, 1/1024);
+      lastMaskCanvas = c;
     }
     function clearMask(){
       uniforms.uMask.value = null;
       uniforms.uHasMask.value = 0.0;
+      lastMaskCanvas = null;
+    }
+    function setHeightFromCanvas(c){
+      uniforms.uHeight.value = canvasToTexture(c, {srgb:false});
+      uniforms.uHasHeight.value = 1.0;
+    }
+    function clearHeight(){
+      uniforms.uHeight.value = null;
+      uniforms.uHasHeight.value = 0.0;
+    }
+    function setOrientFromCanvas(c){
+      uniforms.uOrient.value = canvasToTexture(c, {srgb:false});
+      uniforms.uHasOrient.value = 1.0;
     }
 
-    async function regenAutoFromFront(frontCanvas){
+    async function regenMapsFromFront(frontCanvas){
       const hasUserHeight = ui.heightFile.files?.length;
-      const hasUserMask = ui.maskFile.files?.length;
+      const hasUserMask   = ui.maskFile.files?.length;
 
-      if(ui.useAutoHeight.checked && !hasUserHeight){
-        status('Generating height…');
-        await setHeightFromCanvas(makeAutoHeight(frontCanvas));
-        log('✓ Auto height generated (more visible)');
-      } else if(!hasUserHeight && !ui.useAutoHeight.checked){
-        clearHeight();
-        log('ℹ Auto-height off (no height)');
-      }
-
+      // auto mask (if enabled and no uploaded mask)
       if(ui.useAutoMask.checked && !hasUserMask){
         status('Generating mask…');
-        await setMaskFromCanvas(makeAutoMask(frontCanvas));
+        const mc = makeAutoMask(frontCanvas);
+        setMaskFromCanvas(mc);
         log('✓ Auto mask generated (Pokémon masked out)');
       } else if(!hasUserMask && !ui.useAutoMask.checked){
         clearMask();
-        log('ℹ Auto-mask off (no mask)');
+        log('ℹ Mask off (no mask)');
+      }
+
+      // region orientation map (always regenerate from current front)
+      status('Analyzing regions…');
+      const oc = makeRegionOrientationMap(frontCanvas);
+      setOrientFromCanvas(oc);
+      log('✓ Region/orientation map generated (object-like angle variation)');
+
+      // auto texture map (if enabled and no uploaded texture map)
+      if(ui.useAutoHeight.checked && !hasUserHeight){
+        status('Generating texture map…');
+        const tc = makeAutoTextureMap(frontCanvas, (ui.useAutoMask.checked ? lastMaskCanvas : null));
+        setHeightFromCanvas(tc);
+        log('✓ Auto texture map generated (fine modulation)');
+      } else if(!hasUserHeight && !ui.useAutoHeight.checked){
+        clearHeight();
+        log('ℹ Auto texture map off (no map)');
       }
 
       status('Ready');
@@ -834,12 +1030,14 @@
         const [frontT, backT] = await Promise.all([ loadTex(frontPath), loadTex(PATH_BACK) ]);
         uniforms.uFront.value = frontT;
         uniforms.uBack.value  = backT;
-
         log('✓ Loaded: ' + frontPath);
         log('✓ Loaded: ' + PATH_BACK);
 
         const src = await loadImageToCanvas(frontPath);
-        await regenAutoFromFront(scaleCanvasMax(src, 2048));
+        const srcScaled = scaleCanvasMax(src, 2048);
+        lastFrontCanvas = srcScaled;
+
+        await regenMapsFromFront(srcScaled);
       }catch(e){
         log('✗ ' + (e.message || e));
         status('Error');
@@ -851,46 +1049,12 @@
     ui.reload.onclick = ()=> loadPreset(ui.preset.value);
 
     ui.useHolo.addEventListener('change', ()=> uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0);
-    ui.useEmboss.addEventListener('change', ()=> uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0);
-    ui.useAutoMask.addEventListener('change', ()=> uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0);
-
-    ui.useAutoHeight.addEventListener('change', async ()=>{
-      if(ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
-        try{
-          status('Generating height…');
-          const src = ui.frontFile.files?.length ? await loadImageToCanvas(ui.frontFile.files[0]) : await loadImageToCanvas(PRESETS[ui.preset.value]);
-          await setHeightFromCanvas(makeAutoHeight(scaleCanvasMax(src, 2048)));
-          log('✓ Auto height generated');
-          status('Ready');
-        }catch(e){
-          log('✗ Auto height failed: ' + (e.message||e));
-          status('Error');
-        }
-      }
-      if(!ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
-        clearHeight();
-        log('ℹ Auto-height off (no height)');
-      }
-    });
-
     ui.useAutoMask.addEventListener('change', async ()=>{
       uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0;
-      if(ui.useAutoMask.checked && !(ui.maskFile.files?.length)){
-        try{
-          status('Generating mask…');
-          const src = ui.frontFile.files?.length ? await loadImageToCanvas(ui.frontFile.files[0]) : await loadImageToCanvas(PRESETS[ui.preset.value]);
-          await setMaskFromCanvas(makeAutoMask(src));
-          log('✓ Auto mask generated');
-          status('Ready');
-        }catch(e){
-          log('✗ Auto mask failed: ' + (e.message||e));
-          status('Error');
-        }
-      }
-      if(!ui.useAutoMask.checked && !(ui.maskFile.files?.length)){
-        clearMask();
-        log('ℹ Auto-mask off (no mask)');
-      }
+      if(lastFrontCanvas) await regenMapsFromFront(lastFrontCanvas);
+    });
+    ui.useAutoHeight.addEventListener('change', async ()=>{
+      if(lastFrontCanvas) await regenMapsFromFront(lastFrontCanvas);
     });
 
     ui.frontFile.addEventListener('change', async (e)=>{
@@ -899,9 +1063,10 @@
       status('Loading front…');
       try{
         const src = await loadImageToCanvas(file);
-        await setFrontFromCanvas(src);
+        const srcScaled = scaleCanvasMax(src, 2048);
+        setFrontFromCanvas(srcScaled);
         log('✓ Loaded front upload: ' + file.name);
-        await regenAutoFromFront(scaleCanvasMax(src, 2048));
+        await regenMapsFromFront(srcScaled);
       }catch(err){
         log('✗ Front upload failed: ' + (err.message||err));
         status('Error');
@@ -911,15 +1076,15 @@
     ui.heightFile.addEventListener('change', async (e)=>{
       const file = e.target.files?.[0];
       if(!file) return;
-      status('Loading height…');
+      status('Loading texture map…');
       try{
         const c = await loadImageToCanvas(file);
-        const sc = scaleCanvasMax(c, 2048);
-        await setHeightFromCanvas(sc);
-        log('✓ Loaded height upload: ' + file.name);
+        const cs = scaleCanvasMax(c, 2048);
+        setHeightFromCanvas(cs);
+        log('✓ Loaded texture map upload: ' + file.name);
         status('Ready');
       }catch(err){
-        log('✗ Height upload failed: ' + (err.message||err));
+        log('✗ Texture map upload failed: ' + (err.message||err));
         status('Error');
       }
     });
@@ -930,10 +1095,16 @@
       status('Loading mask…');
       try{
         const c = await loadImageToCanvas(file);
-        const sc = scaleCanvasMax(c, 1024);
-        await setMaskFromCanvas(sc);
+        const cs = scaleCanvasMax(c, 1024);
+        setMaskFromCanvas(cs);
         log('✓ Loaded mask upload: ' + file.name);
-        status('Ready');
+
+        // if auto texture map is on and user didn't upload a texture map, regenerate so Pokémon stays flatter
+        if(lastFrontCanvas && ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
+          await regenMapsFromFront(lastFrontCanvas);
+        }else{
+          status('Ready');
+        }
       }catch(err){
         log('✗ Mask upload failed: ' + (err.message||err));
         status('Error');
@@ -948,17 +1119,24 @@
     });
 
     const clock = new THREE.Clock();
+    const tmpSoft = new THREE.Vector3();
+
     function animate(){
       requestAnimationFrame(animate);
       uniforms.uTime.value = clock.getElapsedTime();
+
       updateCamera();
+
+      // Softbox direction follows camera + overhead. This makes reflections feel “real”.
+      tmpSoft.copy(camera.position).add(new THREE.Vector3(0, 1.2, 0)).normalize();
+      uniforms.uSoftDir.value.copy(tmpSoft);
+
       renderer.render(scene, camera);
     }
     animate();
 
-    // ---------------- boot ----------------
+    // boot defaults
     uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0;
-    uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0;
     uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0;
 
     status('Loading preset…');
