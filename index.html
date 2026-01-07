@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Card Viewer (Stable • Studio Lighting BRIGHT)</title>
+  <title>Card Viewer (Studio + Holo + Height/Emboss)</title>
   <style>
     html,body{height:100%;margin:0;overflow:hidden;background:#0b0e12;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     #hud{
@@ -15,7 +15,7 @@
       background:rgba(18,20,26,.78);border:1px solid rgba(255,255,255,.10);
       border-radius:14px;padding:8px 10px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       box-shadow:0 10px 30px rgba(0,0,0,.35);
-      display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+      display:flex;gap:10px;align-items:center;flex-wrap:wrap;
     }
     select,button,input{
       background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
@@ -24,7 +24,7 @@
     button{cursor:pointer}
     #status{margin-left:auto;opacity:.9}
     #log{
-      position:fixed;left:12px;bottom:12px;width:min(720px,calc(100% - 24px));
+      position:fixed;left:12px;bottom:12px;width:min(820px,calc(100% - 24px));
       max-height:35vh;overflow:auto;white-space:pre-wrap;
       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.25;
       color:#e7eefc;background:rgba(9,12,16,.72);border:1px solid rgba(255,255,255,.10);
@@ -33,8 +33,9 @@
     }
     #log.on{display:block}
     canvas{display:block;width:100%;height:100%}
+    label{display:flex;gap:8px;align-items:center}
     .small{font-size:12px;opacity:.85}
-    input[type="range"]{padding:0}
+    input[type="checkbox"]{width:18px;height:18px}
   </style>
 </head>
 <body>
@@ -50,18 +51,14 @@
     </div>
 
     <div class="pill">
-      <label style="display:flex;gap:8px;align-items:center;">
-        <span class="small">Corner</span>
-        <input id="corner" type="range" min="0.030" max="0.070" step="0.001" value="0.048">
-        <span id="cornerVal" class="small">0.048</span>
-      </label>
+      <label><span class="small">Front</span><input id="frontFile" type="file" accept="image/*"></label>
+      <label><span class="small">Height</span><input id="heightFile" type="file" accept="image/*"></label>
     </div>
 
     <div class="pill">
-      <label style="display:flex;gap:8px;align-items:center;">
-        <span style="opacity:.85">Front upload</span>
-        <input id="frontFile" type="file" accept="image/*">
-      </label>
+      <label><input id="useHolo" type="checkbox" checked><span class="small">Holo (front)</span></label>
+      <label><input id="useEmboss" type="checkbox" checked><span class="small">Emboss</span></label>
+      <label><input id="useAutoHeight" type="checkbox" checked><span class="small">Auto-height</span></label>
     </div>
 
     <div id="status" class="pill">Booting…</div>
@@ -72,24 +69,38 @@
   <script type="module">
     import * as THREE from './libs/three.module.js';
 
+    // ---------------- paths (your structure) ----------------
     const PATH_BACK = './assets/pokemon-back.jpg';
     const PRESETS = {
       ray:   './assets/presets/mega-rayquaza-front.JPG',
       blast: './assets/presets/mega-blastoise-front.JPG'
     };
 
+    // ---------------- ui/log/status ----------------
     const logEl = document.getElementById('log');
     const statusEl = document.getElementById('status');
-    function log(s){ logEl.textContent += s + "\\n"; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
-    function status(s){ statusEl.textContent = s; }
-    document.getElementById('toggleLog').onclick = ()=> logEl.classList.toggle('on');
+    const ui = {
+      preset: document.getElementById('preset'),
+      reload: document.getElementById('reload'),
+      reset: document.getElementById('reset'),
+      toggleLog: document.getElementById('toggleLog'),
+      frontFile: document.getElementById('frontFile'),
+      heightFile: document.getElementById('heightFile'),
+      useHolo: document.getElementById('useHolo'),
+      useEmboss: document.getElementById('useEmboss'),
+      useAutoHeight: document.getElementById('useAutoHeight')
+    };
 
-    // renderer
+    function log(s){ logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
+    function status(s){ statusEl.textContent = s; }
+    ui.toggleLog.onclick = ()=> logEl.classList.toggle('on');
+
+    // ---------------- renderer/scene ----------------
     const renderer = new THREE.WebGLRenderer({ antialias:true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.toneMapping = THREE.NoToneMapping; // studio pipeline
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -98,7 +109,7 @@
     const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.01, 50);
     camera.position.set(0, 0.06, 1.9);
 
-    // STUDIO LIGHTING (very bright, flat)
+    // ---------------- studio lighting (bright + flat) ----------------
     scene.add(new THREE.AmbientLight(0xffffff, 2.2));
     scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 2.6));
 
@@ -122,7 +133,7 @@
     bottomLight.position.set(0, -2.8, 1.2);
     scene.add(bottomLight);
 
-    // tiny orbit controls
+    // ---------------- tiny orbit controls ----------------
     const state = {
       target: new THREE.Vector3(0, 0.02, 0),
       yaw: 0.35, pitch: -0.10, dist: 1.9,
@@ -159,8 +170,6 @@
       state.dist *= (e.deltaY>0)?1.06:0.94;
       state.dist = clamp(state.dist, 1.1, 4.5);
     }, {passive:false});
-
-    // pinch zoom
     canvas.addEventListener('touchstart',(e)=>{
       if(e.touches.length===2){
         const dx=e.touches[0].clientX-e.touches[1].clientX;
@@ -180,12 +189,124 @@
       }
     },{passive:true});
 
-    document.getElementById('reset').onclick=()=>{
+    ui.reset.onclick=()=>{
       state.yaw=0.35; state.pitch=-0.10; state.dist=1.9;
       updateCamera();
     };
 
-    // rounded corners discard
+    // ---------------- helpers: image->canvas, canvas->texture ----------------
+    async function loadImageToCanvas(source) {
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.crossOrigin = 'anonymous';
+        im.onload = () => resolve(im);
+        im.onerror = (e) => reject(e);
+        if (source instanceof Blob) im.src = URL.createObjectURL(source);
+        else im.src = source;
+      });
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      return c;
+    }
+
+    function canvasToTexture(c, {srgb=false}={}) {
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      t.anisotropy = 8;
+      t.needsUpdate = true;
+      return t;
+    }
+
+    // Auto-height: broad structure + edge emphasis + micro grain (non-tiling-ish)
+    function makeAutoHeight(srcCanvas) {
+      const w = srcCanvas.width, h = srcCanvas.height;
+      const sctx = srcCanvas.getContext('2d', { willReadFrequently:true });
+      const src = sctx.getImageData(0,0,w,h);
+      const d = src.data;
+
+      const gray = new Float32Array(w*h);
+      for (let i=0,p=0;i<gray.length;i++,p+=4){
+        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
+        gray[i] = 0.2126*r + 0.7152*g + 0.0722*b;
+      }
+
+      // box blur (radius 3) to get broad form
+      const blur = new Float32Array(w*h);
+      const rad = 3;
+      for (let y=0;y<h;y++){
+        for (let x=0;x<w;x++){
+          let sum=0,cnt=0;
+          for (let yy=y-rad; yy<=y+rad; yy++){
+            if(yy<0||yy>=h) continue;
+            const row = yy*w;
+            for (let xx=x-rad; xx<=x+rad; xx++){
+              if(xx<0||xx>=w) continue;
+              sum += gray[row+xx];
+              cnt++;
+            }
+          }
+          blur[y*w+x] = sum/cnt;
+        }
+      }
+
+      // edge (simple gradient magnitude)
+      const edge = new Float32Array(w*h);
+      for (let y=1;y<h-1;y++){
+        for (let x=1;x<w-1;x++){
+          const i=y*w+x;
+          const gx = blur[i+1]-blur[i-1];
+          const gy = blur[i+w]-blur[i-w];
+          edge[i] = Math.min(1, Math.abs(gx)*1.8 + Math.abs(gy)*1.8);
+        }
+      }
+
+      function fract(x){ return x - Math.floor(x); }
+      function hash(n){ return fract(Math.sin(n)*43758.5453123); }
+      function noise(x,y){
+        const n = x*127.1 + y*311.7;
+        return hash(n);
+      }
+
+      const out = document.createElement('canvas');
+      out.width=w; out.height=h;
+      const octx = out.getContext('2d', { willReadFrequently:true });
+      const outImg = octx.createImageData(w,h);
+      const od = outImg.data;
+
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          const i=y*w+x;
+          const base = blur[i];
+          const ed = edge[i];
+          const micro = (noise(x*0.85, y*0.85)-0.5) * 0.12;
+
+          // combine: broad + edge lift + micro
+          let v = base*0.78 + ed*0.22 + micro;
+
+          // contrast curve so it "pops" more
+          v = Math.max(0, Math.min(1, (v-0.35)*1.25 + 0.35));
+
+          const g = Math.round(v*255);
+          const p=i*4;
+          od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
+        }
+      }
+      octx.putImageData(outImg,0,0);
+      return out;
+    }
+
+    // ---------------- card shaders ----------------
+    // Locked Pokémon-ish corners
+    const CORNER = 0.044;
+
+    // Brightness tuning (already working for you)
+    const STUDIO_GAMMA = 0.78;
+    const STUDIO_GAIN  = 1.45;
+
     const roundedRectGLSL = `
       float roundedMask(vec2 uv, float r){
         vec2 p = uv * 2.0 - 1.0;
@@ -196,59 +317,201 @@
       }
     `;
 
+    // Holo/emboss parameters (set to "extreme modern card" defaults)
+    const HOLO_INTENSITY = 1.35; // overall strength
+    const HOLO_BAND_W    = 0.26; // wider bands (you liked ~0.25)
+    const HOLO_WARP      = 0.18; // wavy distortion amount
+    const HOLO_GRAIN     = 0.18; // glitter/noise
+
+    const EMBOSS_STRENGTH = 0.55; // normal perturb strength (visual emboss)
+    const HEIGHT_UV_SCALE = 1.0;  // keep aligned
+
     const uniforms = {
-      uFront:{value:null},
-      uBack:{value:null},
-      uCorner:{value:0.048}
+      // textures
+      uFront: { value: null },
+      uBack:  { value: null },
+      uHeight:{ value: null },      // linear grayscale height
+      uHasHeight:{ value: 0.0 },
+
+      // toggles
+      uUseHolo:   { value: 1.0 },
+      uUseEmboss: { value: 1.0 },
+
+      // constants
+      uCorner: { value: CORNER },
+      uTime:   { value: 0.0 },
+
+      // view/light
+      uLightDir: { value: new THREE.Vector3(0.3, 0.9, 0.5).normalize() }
     };
 
-    // brightness tuning (already working for you)
-    const STUDIO_GAMMA = 0.78;
-    const STUDIO_GAIN  = 1.45;
+    // Common vertex: also pass a view vector-ish
+    const cardVS = `
+      varying vec2 vUv;
+      varying vec3 vN;
+      varying vec3 vV;
+      void main(){
+        vUv = uv;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vN = normalize(mat3(modelMatrix) * normal);
+        vV = normalize(cameraPosition - wp.xyz);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `;
+
+    // Front shader: base + emboss (from height) + holo (modulated by height)
+    const frontFS = `
+      precision highp float;
+      varying vec2 vUv;
+      varying vec3 vN;
+      varying vec3 vV;
+
+      uniform sampler2D uFront;
+      uniform sampler2D uHeight;
+      uniform float uHasHeight;
+
+      uniform float uUseHolo;
+      uniform float uUseEmboss;
+
+      uniform float uCorner;
+      uniform float uTime;
+      uniform vec3  uLightDir;
+
+      ${roundedRectGLSL}
+
+      float fractf(float x){ return x - floor(x); }
+      float hash(vec2 p){ return fractf(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+      float noise(vec2 p){
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        vec2 u = f*f*(3.0 - 2.0*f);
+        return mix(a, b, u.x) + (c - a)*u.y*(1.0 - u.x) + (d - b)*u.x*u.y;
+      }
+
+      vec3 rainbow(float t){
+        return clamp(vec3(
+          sin(6.2831*(t + 0.00))*0.5+0.5,
+          sin(6.2831*(t + 0.33))*0.5+0.5,
+          sin(6.2831*(t + 0.66))*0.5+0.5
+        ), 0.0, 1.0);
+      }
+
+      void main(){
+        float inside = roundedMask(vUv, uCorner);
+        if(inside < 0.5) discard;
+
+        vec3 base = texture2D(uFront, vUv).rgb;
+
+        // Studio lift (confirmed)
+        base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
+        base *= ${STUDIO_GAIN.toFixed(4)};
+        base = clamp(base, 0.0, 1.0);
+
+        // Height sampling
+        float h = 0.5;
+        vec2 uvH = vUv * ${HEIGHT_UV_SCALE.toFixed(3)};
+        if(uHasHeight > 0.5){
+          h = texture2D(uHeight, uvH).r;
+        }
+
+        // Emboss as a normal perturbation from height gradient
+        vec3 N = normalize(vN);
+        vec3 L = normalize(uLightDir);
+        vec3 V = normalize(vV);
+
+        if(uUseEmboss > 0.5 && uHasHeight > 0.5){
+          // gradient estimate; use small step in UV
+          vec2 e = vec2(1.0/1024.0, 1.0/1024.0);
+          float hx = texture2D(uHeight, uvH + vec2(e.x, 0.0)).r;
+          float hy = texture2D(uHeight, uvH + vec2(0.0, e.y)).r;
+          vec2 grad = vec2(hx - h, hy - h);
+          N = normalize(N + vec3(-grad.x, -grad.y, 0.0) * ${EMBOSS_STRENGTH.toFixed(4)});
+        }
+
+        // Basic diffuse shading (keep subtle because texture is "finished")
+        float ndl = clamp(dot(N, L)*0.45 + 0.55, 0.0, 1.0);
+        base *= mix(0.96, 1.08, ndl);
+
+        // Holo layer (front only)
+        if(uUseHolo > 0.5){
+          // Fresnel: stronger at glancing angles
+          float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.2);
+
+          // Wide band pattern + wavy distortion
+          float w = noise(vUv*8.0 + vec2(uTime*0.05, -uTime*0.04));
+          float warp = (w - 0.5) * ${HOLO_WARP.toFixed(4)};
+          float band = sin(((vUv.y + warp) * 10.0 + (vUv.x + warp) * 2.5) / max(0.001, ${HOLO_BAND_W.toFixed(4)}) + uTime*0.55);
+          band = band * 0.5 + 0.5;
+
+          // Glitter grain
+          float g = noise(vUv*220.0 + uTime*0.15);
+
+          // Height modulation: raised parts shimmer differently
+          float heightMod = 0.65 + (h - 0.5) * 1.1;
+
+          vec3 holoCol = rainbow(band*0.65 + w*0.30 + fres*0.22);
+          holoCol += (g - 0.5) * ${HOLO_GRAIN.toFixed(4)};
+
+          // Apply holo mostly in highlights + fresnel, plus height response
+          float holoAmt = ${HOLO_INTENSITY.toFixed(4)} * (0.10 + 0.55*fres) * clamp(heightMod, 0.0, 1.4);
+
+          base += holoCol * holoAmt;
+          base = clamp(base, 0.0, 1.0);
+        }
+
+        gl_FragColor = vec4(base, 1.0);
+      }
+    `;
+
+    // Back shader: just the back texture (no holo, no emboss)
+    const backFS = `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D uBack;
+      uniform float uCorner;
+      ${roundedRectGLSL}
+      void main(){
+        float inside = roundedMask(vUv, uCorner);
+        if(inside < 0.5) discard;
+
+        vec3 base = texture2D(uBack, vUv).rgb;
+
+        // Studio lift (keep consistent)
+        base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
+        base *= ${STUDIO_GAIN.toFixed(4)};
+        base = clamp(base, 0.0, 1.0);
+
+        gl_FragColor = vec4(base, 1.0);
+      }
+    `;
 
     const frontMat = new THREE.ShaderMaterial({
-      uniforms, transparent:true, side:THREE.FrontSide,
-      vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
-      fragmentShader:`
-        precision highp float;
-        varying vec2 vUv;
-        uniform sampler2D uFront;
-        uniform float uCorner;
-        ${roundedRectGLSL}
-        void main(){
-          float inside = roundedMask(vUv, uCorner);
-          if(inside < 0.5) discard;
-          vec3 base = texture2D(uFront, vUv).rgb;
-          base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
-          base *= ${STUDIO_GAIN.toFixed(4)};
-          base = clamp(base, 0.0, 1.0);
-          gl_FragColor = vec4(base, 1.0);
-        }
-      `
+      uniforms,
+      transparent:true,
+      side:THREE.FrontSide,
+      vertexShader: cardVS,
+      fragmentShader: frontFS
     });
 
     const backMat = new THREE.ShaderMaterial({
-      uniforms, transparent:true, side:THREE.FrontSide,
-      vertexShader:`varying vec2 vUv; void main(){ vUv=vec2(1.0-uv.x, uv.y); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
-      fragmentShader:`
-        precision highp float;
+      uniforms,
+      transparent:true,
+      side:THREE.FrontSide,
+      vertexShader: `
         varying vec2 vUv;
-        uniform sampler2D uBack;
-        uniform float uCorner;
-        ${roundedRectGLSL}
         void main(){
-          float inside = roundedMask(vUv, uCorner);
-          if(inside < 0.5) discard;
-          vec3 base = texture2D(uBack, vUv).rgb;
-          base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
-          base *= ${STUDIO_GAIN.toFixed(4)};
-          base = clamp(base, 0.0, 1.0);
-          gl_FragColor = vec4(base, 1.0);
+          vUv = vec2(1.0 - uv.x, uv.y); // cancel mirror for rotated back
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
         }
-      `
+      `,
+      fragmentShader: backFS
     });
 
-    // card meshes
+    // ---------------- meshes ----------------
     const W=1.0, H=W*(88/63);
     const geo = new THREE.PlaneGeometry(W, H, 1, 1);
 
@@ -259,17 +522,7 @@
     group.rotation.x = -0.04;
     scene.add(group);
 
-    // Corner slider (for fine tuning)
-    const cornerSlider = document.getElementById('corner');
-    const cornerVal = document.getElementById('cornerVal');
-    function setCorner(v){
-      uniforms.uCorner.value = v;
-      cornerVal.textContent = v.toFixed(3);
-    }
-    cornerSlider.addEventListener('input', ()=> setCorner(parseFloat(cornerSlider.value)));
-    setCorner(parseFloat(cornerSlider.value));
-
-    // textures
+    // ---------------- load textures (file/url) ----------------
     const loader = new THREE.TextureLoader();
     function loadTex(url){
       return new Promise((resolve,reject)=>{
@@ -282,53 +535,142 @@
       });
     }
 
+    async function setFrontFromCanvas(canvas){
+      const tex = canvasToTexture(canvas, {srgb:true});
+      uniforms.uFront.value = tex;
+    }
+
+    async function setHeightFromCanvas(canvas){
+      const tex = canvasToTexture(canvas, {srgb:false});
+      uniforms.uHeight.value = tex;
+      uniforms.uHasHeight.value = 1.0;
+    }
+
+    function clearHeight(){
+      uniforms.uHeight.value = null;
+      uniforms.uHasHeight.value = 0.0;
+    }
+
     async function loadPreset(which){
+      status('Loading…');
+      logEl.textContent = '';
+
       try{
-        status('Loading…'); logEl.textContent='';
-        const f = PRESETS[which];
-        const [frontT, backT] = await Promise.all([loadTex(f), loadTex(PATH_BACK)]);
+        const frontPath = PRESETS[which];
+        const [frontT, backT] = await Promise.all([
+          loadTex(frontPath),
+          loadTex(PATH_BACK)
+        ]);
         uniforms.uFront.value = frontT;
         uniforms.uBack.value  = backT;
-        log('✓ Loaded: ' + f);
+
+        log('✓ Loaded: ' + frontPath);
         log('✓ Loaded: ' + PATH_BACK);
+
+        // height setup
+        if(ui.useAutoHeight.checked){
+          const srcCanvas = await loadImageToCanvas(frontPath);
+          const hCanvas = makeAutoHeight(srcCanvas);
+          await setHeightFromCanvas(hCanvas);
+          log('✓ Auto height generated (preset)', 'ok');
+        }else{
+          clearHeight();
+          log('ℹ Auto-height off (no height)', 'warn');
+        }
+
         status('Ready');
       }catch(e){
-        log('✗ ' + e.message);
+        log('✗ ' + (e.message || e));
         status('Error');
       }
     }
 
-    document.getElementById('preset').addEventListener('change', (e)=> loadPreset(e.target.value));
-    document.getElementById('reload').onclick = ()=> loadPreset(document.getElementById('preset').value);
+    // ---------------- UI handlers ----------------
+    ui.preset.addEventListener('change', ()=> loadPreset(ui.preset.value));
+    ui.reload.onclick = ()=> loadPreset(ui.preset.value);
 
-    document.getElementById('frontFile').addEventListener('change', async (e)=>{
+    ui.useHolo.addEventListener('change', ()=> uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0);
+    ui.useEmboss.addEventListener('change', ()=> uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0);
+
+    // Turning off auto-height doesn't remove a user-uploaded height; it just stops generating on reload.
+    ui.useAutoHeight.addEventListener('change', async ()=>{
+      // if they turned auto-height ON and no height exists, generate from current front
+      if(ui.useAutoHeight.checked && uniforms.uFront.value){
+        try{
+          status('Generating height…');
+          // generate from currently shown front texture by reloading its source:
+          // If user uploaded front, we regenerate from file (handled in upload path). If preset, regenerate via preset path.
+          const isPreset = ui.frontFile.files?.length ? false : true;
+          const srcCanvas = isPreset
+            ? await loadImageToCanvas(PRESETS[ui.preset.value])
+            : await loadImageToCanvas(ui.frontFile.files[0]);
+          const hCanvas = makeAutoHeight(srcCanvas);
+          await setHeightFromCanvas(hCanvas);
+          status('Ready');
+          log('✓ Auto height generated', 'ok');
+        }catch(e){
+          log('✗ Auto height failed: ' + (e.message||e));
+          status('Error');
+        }
+      }
+    });
+
+    ui.frontFile.addEventListener('change', async (e)=>{
       const file = e.target.files?.[0];
       if(!file) return;
-      status('Loading upload…');
-      const url = URL.createObjectURL(file);
+      status('Loading front…');
       try{
-        const t = await loadTex(url);
-        uniforms.uFront.value = t;
-        log('✓ Loaded upload: ' + file.name);
+        const c = await loadImageToCanvas(file);
+        await setFrontFromCanvas(c);
+        log('✓ Loaded front upload: ' + file.name);
+
+        // if auto-height is on AND no explicit height file present, regenerate
+        if(ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
+          const hCanvas = makeAutoHeight(c);
+          await setHeightFromCanvas(hCanvas);
+          log('✓ Auto height generated (upload)');
+        }
         status('Ready');
       }catch(err){
-        log('✗ ' + err.message);
+        log('✗ Front upload failed: ' + (err.message||err));
         status('Error');
       }
     });
 
+    ui.heightFile.addEventListener('change', async (e)=>{
+      const file = e.target.files?.[0];
+      if(!file) return;
+      status('Loading height…');
+      try{
+        const c = await loadImageToCanvas(file);
+        await setHeightFromCanvas(c);
+        log('✓ Loaded height upload: ' + file.name);
+        status('Ready');
+      }catch(err){
+        log('✗ Height upload failed: ' + (err.message||err));
+        status('Error');
+      }
+    });
+
+    // ---------------- resize + animation ----------------
     window.addEventListener('resize', ()=>{
       camera.aspect = window.innerWidth/window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
+    const clock = new THREE.Clock();
     function animate(){
       requestAnimationFrame(animate);
+      uniforms.uTime.value = clock.getElapsedTime();
       updateCamera();
       renderer.render(scene, camera);
     }
     animate();
+
+    // ---------------- boot ----------------
+    uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0;
+    uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0;
 
     status('Loading preset…');
     loadPreset('ray');
