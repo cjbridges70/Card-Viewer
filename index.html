@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3D Card Viewer (Base - GitHub Pages)</title>
+  <title>Card Viewer (Base)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -24,13 +24,13 @@
       border: 1px solid rgba(255,255,255,.08);
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 150px;
+      max-height: 170px;
       overflow: auto;
       line-height: 1.25;
     }
   </style>
 
-  <!-- ✅ This fixes "Failed to resolve module specifier 'three'" on GitHub Pages -->
+  <!-- Import map so OrbitControls can import "three" -->
   <script type="importmap">
     {
       "imports": {
@@ -45,17 +45,17 @@
   <div id="ui">
     <div id="status">Loading…</div>
 
-    <label>Front image (PNG/JPG)
+    <label>Front image
       <input id="frontInput" type="file" accept="image/*" />
     </label>
 
-    <label>Back image (PNG/JPG)
+    <label>Back image
       <input id="backInput" type="file" accept="image/*" />
     </label>
 
     <small>
       Drag to rotate • Scroll to zoom • Right-drag to pan<br/>
-      iPhone tip: huge photos are auto-downscaled to 2048px.
+      iPhone tip: large photos auto-downscale to 2048px.
     </small>
   </div>
 
@@ -66,17 +66,14 @@
     const statusEl = document.getElementById("status");
     const log = (m) => statusEl.textContent = m + "\n" + statusEl.textContent;
 
-    // Helpful: show errors on-screen (GitHub Pages + iOS Safari friendly)
+    // Show runtime errors on the page (super helpful on iPhone)
     window.addEventListener("error", (e) => log("JS ERROR ❌ " + (e.message || e.error || e)));
     window.addEventListener("unhandledrejection", (e) => log("PROMISE ERROR ❌ " + (e.reason?.message || e.reason || e)));
 
     // WebGL check
     const test = document.createElement("canvas");
     const gl = test.getContext("webgl") || test.getContext("experimental-webgl");
-    if (!gl) {
-      log("WebGL not available ❌");
-      throw new Error("WebGL not available");
-    }
+    if (!gl) { log("WebGL not available ❌"); throw new Error("WebGL not available"); }
     log("WebGL: available ✅");
 
     // Renderer
@@ -102,43 +99,26 @@
 
     // Lights
     scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(1.5, 2.0, 1.2); scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
+    const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.2);
-    key.position.set(1.5, 2.0, 1.2);
-    scene.add(key);
-
-    const fill = new THREE.DirectionalLight(0xffffff, 0.6);
-    fill.position.set(-1.8, 1.2, 1.6);
-    scene.add(fill);
-
-    const rim = new THREE.DirectionalLight(0x9bd5ff, 0.6);
-    rim.position.set(0.0, 1.8, -2.0);
-    scene.add(rim);
-
-    // Rounded card geometry (extruded)
-    const cardWidth = 0.63;
-    const cardHeight = 0.88;
-    const cornerRadius = 0.045;
-    const thickness = 0.02;
+    // Card geometry (rounded extrude)
+    const cardWidth = 0.63, cardHeight = 0.88, cornerRadius = 0.045, thickness = 0.02;
 
     function roundedRectShape(w, h, r) {
-      const x = -w / 2, y = -h / 2;
-      const shape = new THREE.Shape();
+      const x = -w/2, y = -h/2;
+      const s = new THREE.Shape();
       const rr = Math.min(r, w/2, h/2);
-      shape.moveTo(x + rr, y);
-      shape.lineTo(x + w - rr, y);
-      shape.quadraticCurveTo(x + w, y, x + w, y + rr);
-      shape.lineTo(x + w, y + h - rr);
-      shape.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-      shape.lineTo(x + rr, y + h);
-      shape.quadraticCurveTo(x, y + h, x, y + h - rr);
-      shape.lineTo(x, y + rr);
-      shape.quadraticCurveTo(x, y, x + rr, y);
-      return shape;
+      s.moveTo(x+rr, y);
+      s.lineTo(x+w-rr, y); s.quadraticCurveTo(x+w, y, x+w, y+rr);
+      s.lineTo(x+w, y+h-rr); s.quadraticCurveTo(x+w, y+h, x+w-rr, y+h);
+      s.lineTo(x+rr, y+h); s.quadraticCurveTo(x, y+h, x, y+h-rr);
+      s.lineTo(x, y+rr); s.quadraticCurveTo(x, y, x+rr, y);
+      return s;
     }
 
-    const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-    const geom = new THREE.ExtrudeGeometry(shape, {
+    const geom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
       depth: thickness,
       bevelEnabled: true,
       bevelThickness: 0.004,
@@ -146,14 +126,13 @@
       bevelSegments: 3,
       curveSegments: 24
     });
-    geom.translate(0, 0, -thickness / 2);
+    geom.translate(0, 0, -thickness/2);
     geom.computeVertexNormals();
 
-    // Cap UVs for front/back
+    // UVs for cap textures
     geom.computeBoundingBox();
     const bb = geom.boundingBox;
-    const size = new THREE.Vector3();
-    bb.getSize(size);
+    const size = new THREE.Vector3(); bb.getSize(size);
     const pos = geom.attributes.position;
     const uv = [];
     for (let i = 0; i < pos.count; i++) {
@@ -161,39 +140,30 @@
     }
     geom.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
 
-    // Rebuild groups so we can set 3 materials: edge / front / back
+    // Split into edge/front/back groups
     geom.clearGroups();
     const index = geom.index;
     const normal = geom.attributes.normal;
-    const side = [], front = [], back = [];
-
-    for (let i = 0; i < index.count; i += 3) {
-      const a = index.getX(i), b = index.getX(i+1), c = index.getX(i+2);
-      const nz = (normal.getZ(a) + normal.getZ(b) + normal.getZ(c)) / 3;
-      if (nz > 0.6) front.push(a,b,c);
-      else if (nz < -0.6) back.push(a,b,c);
+    const side=[], front=[], back=[];
+    for (let i=0; i<index.count; i+=3) {
+      const a=index.getX(i), b=index.getX(i+1), c=index.getX(i+2);
+      const nz=(normal.getZ(a)+normal.getZ(b)+normal.getZ(c))/3;
+      if (nz>0.6) front.push(a,b,c);
+      else if (nz<-0.6) back.push(a,b,c);
       else side.push(a,b,c);
     }
-
-    const merged = new Uint32Array(side.length + front.length + back.length);
-    merged.set(side, 0);
-    merged.set(front, side.length);
-    merged.set(back, side.length + front.length);
-
-    geom.setIndex(new THREE.BufferAttribute(merged, 1));
+    const merged = new Uint32Array(side.length+front.length+back.length);
+    merged.set(side,0); merged.set(front,side.length); merged.set(back,side.length+front.length);
+    geom.setIndex(new THREE.BufferAttribute(merged,1));
     geom.addGroup(0, side.length, 0);
     geom.addGroup(side.length, front.length, 1);
-    geom.addGroup(side.length + front.length, back.length, 2);
+    geom.addGroup(side.length+front.length, back.length, 2);
 
-    // Default textures (so you SEE something even before uploading)
-    const texLoader = new THREE.TextureLoader();
-    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
-    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
-    for (const t of [defaultFront, defaultBack]) {
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.flipY = false;
-      t.anisotropy = 8;
-    }
+    // Default textures
+    const loader = new THREE.TextureLoader();
+    const defaultFront = loader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
+    const defaultBack  = loader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
+    for (const t of [defaultFront, defaultBack]) { t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; t.anisotropy = 8; }
 
     const edgeMat  = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.9, metalness: 0.0 });
     const frontMat = new THREE.MeshStandardMaterial({ map: defaultFront, roughness: 0.6, metalness: 0.05 });
@@ -209,31 +179,27 @@
       new THREE.PlaneGeometry(6, 6),
       new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
     );
-    ground.rotation.x = -Math.PI / 2;
+    ground.rotation.x = -Math.PI/2;
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // iOS-safe upload loader (FileReader + optional downscale)
+    // iOS-safe upload loader (FileReader + downscale)
     function downscaleImageToMax(img, maxSize) {
-      const w0 = img.naturalWidth || img.width;
-      const h0 = img.naturalHeight || img.height;
+      const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
       if (largest <= maxSize) return img;
-
-      const scale = maxSize / largest;
-      const w = Math.max(1, Math.round(w0 * scale));
-      const h = Math.max(1, Math.round(h0 * scale));
-
+      const s = maxSize / largest;
+      const w = Math.max(1, Math.round(w0*s));
+      const h = Math.max(1, Math.round(h0*s));
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
       c.getContext("2d").drawImage(img, 0, 0, w, h);
-
       const out = new Image();
       out.src = c.toDataURL("image/jpeg", 0.92);
       return out;
     }
 
-    async function loadTextureFromFile(file, maxSize = 2048) {
+    async function loadTextureFromFile(file, maxSize=2048) {
       const dataURL = await new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onerror = () => reject(new Error("FileReader failed"));
@@ -264,8 +230,7 @@
     }
 
     document.getElementById("frontInput").addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+      const file = e.target.files?.[0]; if (!file) return;
       log("Front upload: " + file.name);
       const tex = await loadTextureFromFile(file, 2048);
       if (frontMat.map) frontMat.map.dispose();
@@ -275,8 +240,7 @@
     });
 
     document.getElementById("backInput").addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+      const file = e.target.files?.[0]; if (!file) return;
       log("Back upload: " + file.name);
       const tex = await loadTextureFromFile(file, 2048);
       if (backMat.map) backMat.map.dispose();
