@@ -11,7 +11,7 @@
       position: fixed; top: 12px; left: 12px; z-index: 10;
       background: rgba(0,0,0,.6); color: #fff; padding: 12px; border-radius: 12px;
       backdrop-filter: blur(8px);
-      display: grid; gap: 10px; min-width: 320px; max-width: min(92vw, 420px);
+      display: grid; gap: 10px; min-width: 320px; max-width: min(92vw, 440px);
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
     #ui label { font-size: 12px; opacity: .95; display: grid; gap: 6px; }
@@ -30,6 +30,17 @@
     }
     .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
     input[type="range"] { width: 190px; }
+    button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.08);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:active { transform: translateY(1px); }
     .pill {
       font-size: 11px; opacity: .9;
       background: rgba(255,255,255,.08);
@@ -56,7 +67,12 @@
       <input id="frontInput" type="file" accept="image/jpeg,image/png" />
     </label>
 
-    <label>Height map (grayscale JPG/PNG)
+    <div class="row">
+      <button id="genHeightBtn">Generate height from front</button>
+      <span class="pill">Fast (no ML)</span>
+    </div>
+
+    <label>Height map (optional override, grayscale JPG/PNG)
       <input id="heightInput" type="file" accept="image/jpeg,image/png" />
     </label>
 
@@ -176,10 +192,10 @@
       return out;
     }
 
-    // Higher tessellation face so bump/foil looks nicer
+    // Rounded face geometry (higher detail for bump/foil)
     function makeRoundedFaceGeometry() {
       const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-      const g = new THREE.ShapeGeometry(shape, 64); // higher segments
+      const g = new THREE.ShapeGeometry(shape, 64);
 
       // UVs from XY bounds
       g.computeBoundingBox();
@@ -221,7 +237,7 @@
     );
     permanentBack.colorSpace = THREE.SRGBColorSpace;
     permanentBack.anisotropy = 8;
-    permanentBack.flipY = true; // if your back is upside down, flip this to false
+    permanentBack.flipY = true; // if back is upside down, change to false
 
     // Default front placeholder
     const defaultFront = loader.load(
@@ -232,7 +248,7 @@
     defaultFront.anisotropy = 8;
     defaultFront.flipY = false;
 
-    // Default 1x1 mid-gray height texture (so shader always has something)
+    // Default 1x1 mid-gray height texture
     const defaultHeight = new THREE.DataTexture(new Uint8Array([128]), 1, 1, THREE.RedFormat);
     defaultHeight.colorSpace = THREE.NoColorSpace;
     defaultHeight.flipY = true;
@@ -270,7 +286,6 @@
     backMesh.position.z = -Z_FACE;
     cardGroup.add(backMesh);
 
-    // Pose
     cardGroup.rotation.x = -0.08;
     cardGroup.rotation.y = 0.55;
 
@@ -283,7 +298,7 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---- FRONT-ONLY HOLO FILM OVERLAY (reacts to height map) ----
+    // ---- FRONT-ONLY HOLO FILM (reacts to height map) ----
     function makeHoloFilmMaterial(heightTex) {
       return new THREE.ShaderMaterial({
         transparent: true,
@@ -293,7 +308,7 @@
           uTime: { value: 0.0 },
           uStrength: { value: 0.55 },
           uHeight: { value: heightTex },
-          uRelief: { value: 0.90 } // how much foil reacts to height gradients
+          uRelief: { value: 0.90 }
         },
         vertexShader: `
           varying vec2 vUv;
@@ -306,11 +321,8 @@
             vec4 mv = modelViewMatrix * vec4(position, 1.0);
             vV = -mv.xyz;
             vN = normalize(normalMatrix * normal);
-
-            // Face basis vectors in view space (works because face is in XY plane)
             vTx = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
             vTy = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));
-
             gl_Position = projectionMatrix * mv;
           }
         `,
@@ -334,7 +346,6 @@
           }
 
           void main() {
-            // Height sampling + gradient (fake normal perturb for foil)
             float eps = 0.0015;
             float hC = texture2D(uHeight, vUv).r;
             float hX1 = texture2D(uHeight, vUv + vec2(eps, 0.0)).r;
@@ -350,7 +361,6 @@
 
             float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
 
-            // Modern-style foil: bands + diagonal + sparkle, influenced by height
             float bands = sin(vUv.y*70.0 + vUv.x*18.0 + uTime*1.6 + hC*6.0) * 0.5 + 0.5;
             float diag  = sin(vUv.x*90.0 + vUv.y*55.0 + uTime*0.9 + hC*4.0) * 0.5 + 0.5;
 
@@ -359,7 +369,6 @@
             vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
             vec3 film = rainbow*(0.08 + 0.92*fres) + rainbow*(diag*0.07) + sparkle;
 
-            // A little “height gating” makes ridges catch more foil
             float ridge = smoothstep(0.45, 0.75, hC);
             float a = clamp((0.10 + 0.9*fres) * uStrength * (0.85 + 0.35*ridge), 0.0, 1.0);
 
@@ -378,7 +387,9 @@
     frontFilm.position.z = Z_FILM;
     cardGroup.add(frontFilm);
 
-    // ---- File loaders (iOS-safe) ----
+    // ---- iOS-safe file loading ----
+    let lastFrontImage = null; // used for Generate Height
+
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
@@ -394,7 +405,7 @@
       return out;
     }
 
-    async function loadTextureFromFile(file, maxSize=2048, { isData=false } = {}) {
+    async function decodeImageFromFile(file) {
       const dataURL = await new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onerror = () => reject(new Error("FileReader failed"));
@@ -409,24 +420,105 @@
         im.src = dataURL;
       });
 
-      const maybeDown = downscaleImageToMax(img, maxSize);
-      const finalImg = await new Promise((resolve, reject) => {
-        if (maybeDown === img) return resolve(img);
-        maybeDown.onload = () => resolve(maybeDown);
-        maybeDown.onerror = () => reject(new Error("Downscaled image decode failed"));
-      });
+      return img;
+    }
 
-      const tex = new THREE.Texture(finalImg);
+    function imageToTexture(img, { isData=false } = {}) {
+      const tex = new THREE.Texture(img);
       tex.anisotropy = 8;
-
-      // Your setup: front uploads look correct with flipY=true
-      tex.flipY = true;
-
-      // Color space handling
+      tex.flipY = true; // matches your working upload orientation
       tex.colorSpace = isData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
-
       tex.needsUpdate = true;
-      return { tex, w: finalImg.naturalWidth, h: finalImg.naturalHeight };
+      return tex;
+    }
+
+    // ---- Option A: Generate height from front (fast, no ML) ----
+    function generateHeightFromImage(img, maxSize = 1024) {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      const s = Math.min(1, maxSize / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * s));
+      const h = Math.max(1, Math.round(h0 * s));
+
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const im = ctx.getImageData(0, 0, w, h);
+      const d = im.data;
+
+      // 1) luminance
+      const lum = new Float32Array(w * h);
+      for (let i = 0, p = 0; p < lum.length; p++, i += 4) {
+        const r = d[i] / 255, g = d[i+1] / 255, b = d[i+2] / 255;
+        lum[p] = 0.2126*r + 0.7152*g + 0.0722*b;
+      }
+
+      // 2) blur (3x3 box)
+      function blur3x3(src) {
+        const out = new Float32Array(src.length);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let sum = 0, count = 0;
+            for (let oy = -1; oy <= 1; oy++) {
+              for (let ox = -1; ox <= 1; ox++) {
+                const xx = x + ox, yy = y + oy;
+                if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+                sum += src[yy*w + xx];
+                count++;
+              }
+            }
+            out[y*w + x] = sum / count;
+          }
+        }
+        return out;
+      }
+      const base = blur3x3(lum);
+
+      // 3) edge magnitude (Sobel-ish)
+      const edge = new Float32Array(w * h);
+      for (let y = 1; y < h-1; y++) {
+        for (let x = 1; x < w-1; x++) {
+          const i = y*w + x;
+          const gx =
+            -base[i - w - 1] - 2*base[i - 1] - base[i + w - 1] +
+             base[i - w + 1] + 2*base[i + 1] + base[i + w + 1];
+          const gy =
+            -base[i - w - 1] - 2*base[i - w] - base[i - w + 1] +
+             base[i + w - 1] + 2*base[i + w] + base[i + w + 1];
+          edge[i] = Math.min(1.0, Math.sqrt(gx*gx + gy*gy));
+        }
+      }
+
+      // 4) combine + normalize
+      const height = new Float32Array(w * h);
+      let mn = 1e9, mx = -1e9;
+      for (let i = 0; i < height.length; i++) {
+        const v = base[i] * 0.85 + edge[i] * 0.60;
+        height[i] = v;
+        mn = Math.min(mn, v);
+        mx = Math.max(mx, v);
+      }
+      const range = Math.max(1e-6, mx - mn);
+      for (let i = 0; i < height.length; i++) height[i] = (height[i] - mn) / range;
+
+      const out = ctx.createImageData(w, h);
+      for (let i = 0, p = 0; p < height.length; p++, i += 4) {
+        const v = Math.round(height[p] * 255);
+        out.data[i] = v; out.data[i+1] = v; out.data[i+2] = v; out.data[i+3] = 255;
+      }
+      ctx.putImageData(out, 0, 0);
+      return c;
+    }
+
+    function canvasToHeightTexture(canvas) {
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.NoColorSpace;
+      tex.anisotropy = 8;
+      tex.flipY = true; // match our shader/bump expectations
+      tex.needsUpdate = true;
+      return tex;
     }
 
     // ---- UI Wiring ----
@@ -450,13 +542,27 @@
     document.getElementById("frontInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
+
       try {
         log(`Front picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
-        const { tex, w, h } = await loadTextureFromFile(file, 2048, { isData:false });
+        const img0 = await decodeImageFromFile(file);
+        const img = downscaleImageToMax(img0, 2048);
+
+        // Wait if downscaled
+        const finalImg = await new Promise((resolve, reject) => {
+          if (img === img0) return resolve(img0);
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("Downscaled image decode failed"));
+        });
+
+        lastFrontImage = finalImg;
+
+        const tex = imageToTexture(finalImg, { isData:false });
         if (frontMat.map) frontMat.map.dispose();
         frontMat.map = tex;
         frontMat.needsUpdate = true;
-        log(`Front applied ✅ ${w}x${h}`);
+
+        log(`Front applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
       } catch (err) {
         log("Front failed ❌ " + err.message);
         alert("Front failed: " + err.message);
@@ -466,24 +572,52 @@
     document.getElementById("heightInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
+
       try {
         log(`Height picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
-        const { tex, w, h } = await loadTextureFromFile(file, 2048, { isData:true });
+        const img0 = await decodeImageFromFile(file);
+        const img = downscaleImageToMax(img0, 2048);
 
-        // Apply to front material as bump map (relief lighting)
+        const finalImg = await new Promise((resolve, reject) => {
+          if (img === img0) return resolve(img0);
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("Downscaled image decode failed"));
+        });
+
+        const tex = imageToTexture(finalImg, { isData:true });
+
         if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
         frontMat.bumpMap = tex;
         frontMat.bumpScale = parseFloat(bumpSlider.value);
         frontMat.needsUpdate = true;
 
-        // Apply to holo shader so foil reacts to relief
         frontFilmMat.uniforms.uHeight.value = tex;
 
-        log(`Height applied ✅ ${w}x${h}`);
+        log(`Height applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
       } catch (err) {
         log("Height failed ❌ " + err.message);
         alert("Height failed: " + err.message);
       }
+    });
+
+    document.getElementById("genHeightBtn").addEventListener("click", () => {
+      if (!lastFrontImage) {
+        alert("Upload a front image first.");
+        return;
+      }
+      log("Generating height from front…");
+
+      const c = generateHeightFromImage(lastFrontImage, 1024);
+      const heightTex = canvasToHeightTexture(c);
+
+      if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
+      frontMat.bumpMap = heightTex;
+      frontMat.bumpScale = parseFloat(bumpSlider.value);
+      frontMat.needsUpdate = true;
+
+      frontFilmMat.uniforms.uHeight.value = heightTex;
+
+      log("Generated height applied ✅");
     });
 
     // Resize + animate
