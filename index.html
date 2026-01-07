@@ -43,7 +43,7 @@
       position: fixed;
       right: 12px;
       top: calc(54px + env(safe-area-inset-top));
-      width: min(360px, calc(100vw - 24px));
+      width: min(380px, calc(100vw - 24px));
       max-height: calc(100vh - 80px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
       overflow:auto;
       z-index: 30;
@@ -54,13 +54,16 @@
     .grid label{ font-size:13px; color:#d6def3; }
     input[type="range"]{ width:100%; }
     .hint{ opacity:.9; font-size:12px; color:#a9b9df; margin-top:8px; line-height:1.25; }
+    .small{ font-size:12px; opacity:.8; }
+    .chk{ display:flex; gap:8px; align-items:center; }
+    .chk input{ transform: scale(1.1); }
 
     #debug{
       position: fixed;
       left: 12px;
       bottom: calc(10px + env(safe-area-inset-bottom));
-      width: min(720px, calc(100vw - 24px));
-      max-height: 32vh;
+      width: min(760px, calc(100vw - 24px));
+      max-height: 34vh;
       z-index: 40;
       overflow:auto;
       white-space: pre-wrap;
@@ -69,14 +72,14 @@
       line-height: 1.25;
       color: #e8eefc;
     }
-    #debug .title{ font-weight:700; margin-bottom:6px; }
+    #debug .title{ font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
     #debug .err{ color:#ff9a9a; }
     #debug .ok{ color:#b6ffb6; }
     .badge{ font-size:12px; opacity:.85; padding:6px 10px; border-radius:999px; }
     .muted{ opacity:.75; }
   </style>
 
-  <!-- ✅ CRITICAL FIX: map bare import 'three' to your local file -->
+  <!-- ✅ CRITICAL: make OrbitControls' `import 'three'` work on Safari/GitHub Pages -->
   <script type="importmap">
     {
       "imports": {
@@ -96,6 +99,7 @@
         <option value="blast">Mega Blastoise</option>
       </select>
       <button id="reload">Reload</button>
+      <button id="resetAll">Reset</button>
       <span id="status" class="badge muted">Booting…</span>
     </div>
     <div class="pill row">
@@ -106,79 +110,713 @@
 
   <div id="panel" class="pill">
     <div class="section">
-      <h3>Info</h3>
-      <div class="hint">
-        This build restores the original “libs” setup and fixes the Safari/GitHub Pages import error via an importmap.
+      <h3>Images</h3>
+      <div class="grid">
+        <label>Front (upload)</label><input id="frontFile" type="file" accept="image/*" />
+        <label>Height (optional)</label><input id="heightFile" type="file" accept="image/*" />
       </div>
+      <div class="hint">
+        If you don’t upload a height map, one is auto-generated from the front image.
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Effects</h3>
+      <div class="grid">
+        <div class="chk"><input id="fxHolo" type="checkbox" checked /><label for="fxHolo">Holographic (front)</label></div><span></span>
+        <div class="chk"><input id="fxHeight" type="checkbox" checked /><label for="fxHeight">Auto Height + Micro-Emboss</label></div><span></span>
+        <div class="chk"><input id="fxMask" type="checkbox" checked /><label for="fxMask">Auto Foil Mask (protect subject)</label></div><span></span>
+      </div>
+      <div class="hint small">
+        “Auto Foil Mask” is a heuristic (no ML): it detects high-detail subject regions and reduces holo there.
+        You can export the mask and tweak it externally if you want perfect control.
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Tuning</h3>
+      <div class="grid">
+        <label>Emboss Strength</label><input id="emboss" type="range" min="0" max="4" step="0.01" value="2.20" />
+        <label>Holo Intensity</label><input id="holo" type="range" min="0" max="4" step="0.01" value="2.10" />
+        <label>Holo Band Width</label><input id="band" type="range" min="0.02" max="0.70" step="0.01" value="0.25" />
+        <label>Foil Grain</label><input id="grain" type="range" min="0" max="3" step="0.01" value="1.25" />
+        <label>Border Foil</label><input id="borderFoil" type="range" min="0" max="1" step="0.01" value="1.00" />
+      </div>
+      <div class="hint small">
+        Border Foil at 1.00 means holo extends all the way to the rounded edge. Lower it if you ever want a “frame”.
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Export</h3>
+      <div class="row">
+        <button id="exportHeight">Export Height</button>
+        <button id="exportMask">Export Foil Mask</button>
+        <button id="toggleLog">Toggle Log</button>
+      </div>
+      <div class="hint small">
+        If something fails to load, it will show in the log (no Web Inspector needed).
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Status</h3>
+      <div class="small" id="miniStatus">—</div>
     </div>
   </div>
 
   <div id="debug" class="pill">
-    <div class="title">DEBUG</div>
-    <div id="dbgText">Booting…</div>
+    <div class="title">
+      <span>DEBUG</span>
+      <span class="small muted" id="dbgHint">tap “Toggle Log” to hide</span>
+    </div>
+    <div id="dbgText"></div>
   </div>
 
   <script type="module">
+    // ---------- tiny logger ----------
+    const dbgBox  = document.getElementById("debug");
     const dbgText = document.getElementById("dbgText");
     const statusEl = document.getElementById("status");
-    const debug = (msg, cls="") => {
+    const miniStatus = document.getElementById("miniStatus");
+
+    const log = (msg, cls="") => {
       const line = document.createElement("div");
       line.textContent = msg;
       if(cls) line.className = cls;
       dbgText.appendChild(line);
-      const box = document.getElementById("debug");
-      box.scrollTop = box.scrollHeight;
+      dbgBox.scrollTop = dbgBox.scrollHeight;
+      console.log(msg);
     };
-    const setStatus = (msg) => { statusEl.textContent = msg; };
+    const setStatus = (msg) => { statusEl.textContent = msg; miniStatus.textContent = msg; };
 
-    window.addEventListener("error", (e) => debug("❌ window.error: " + (e?.message || e), "err"));
-    window.addEventListener("unhandledrejection", (e) => debug("❌ unhandledrejection: " + (e?.reason?.message || e?.reason || e), "err"));
+    window.addEventListener("error", (e) => log("❌ window.error: " + (e?.message || e), "err"));
+    window.addEventListener("unhandledrejection", (e) => log("❌ unhandledrejection: " + (e?.reason?.message || e?.reason || e), "err"));
 
-    // ✅ now we can use bare imports
+    // ---------- imports ----------
     import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    log("✓ Imports OK (three + OrbitControls)", "ok");
 
-    debug("✓ Imports OK (three + OrbitControls)", "ok");
+    // ---------- constants / paths ----------
+    const PATH_BACK = "./assets/pokemon-back.jpg";
+    const PRESETS = {
+      ray:   "./assets/presets/mega-rayquaza-front.JPG",
+      blast: "./assets/presets/mega-blastoise-front.JPG"
+    };
 
+    // ---------- renderer / scene ----------
     const app = document.getElementById("app");
-
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     app.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0d12);
+    scene.background = new THREE.Color(0x07080b);
 
     const camera = new THREE.PerspectiveCamera(38, window.innerWidth/window.innerHeight, 0.01, 50);
-    camera.position.set(0.0, 0.06, 1.55);
+    camera.position.set(0.0, 0.05, 1.55);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.minDistance = 0.8;
-    controls.maxDistance = 3.2;
+    controls.maxDistance = 3.0;
     controls.target.set(0, 0.02, 0);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    const amb = new THREE.AmbientLight(0xffffff, 0.35);
+    scene.add(amb);
+    const key = new THREE.DirectionalLight(0xffffff, 1.8);
     key.position.set(1.2, 1.3, 1.6);
     scene.add(key);
 
-    // Visible test cube so we KNOW rendering works
-    const cube = new THREE.Mesh(
-      new THREE.BoxGeometry(0.15, 0.15, 0.15),
-      new THREE.MeshStandardMaterial({ color: 0x33ccff, roughness: 0.4, metalness: 0.2 })
-    );
-    cube.position.set(0, 0.05, 0);
-    scene.add(cube);
+    // ---------- rounded card geometry ----------
+    function roundedRectShape(w, h, r){
+      const x = -w/2, y = -h/2;
+      const s = new THREE.Shape();
+      s.moveTo(x+r, y);
+      s.lineTo(x+w-r, y);
+      s.quadraticCurveTo(x+w, y, x+w, y+r);
+      s.lineTo(x+w, y+h-r);
+      s.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+      s.lineTo(x+r, y+h);
+      s.quadraticCurveTo(x, y+h, x, y+h-r);
+      s.lineTo(x, y+r);
+      s.quadraticCurveTo(x, y, x+r, y);
+      return s;
+    }
 
-    document.getElementById("resetView").onclick = () => {
+    // card proportions ~ 63x88 mm
+    const CARD_W = 1.0;
+    const CARD_H = CARD_W * (88/63);
+    const CARD_R = 0.06;        // corner radius
+    const CARD_THICK = 0.012;   // thickness
+
+    function makeRoundedCardMesh(){
+      const shape = roundedRectShape(CARD_W, CARD_H, CARD_R);
+      const geo = new THREE.ExtrudeGeometry(shape, {
+        depth: CARD_THICK,
+        bevelEnabled: true,
+        bevelThickness: 0.004,
+        bevelSize: 0.003,
+        bevelSegments: 4,
+        curveSegments: 24
+      });
+      // center it
+      geo.translate(0, 0, -CARD_THICK/2);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    const cardGeo = makeRoundedCardMesh();
+
+    // ---------- utility: load images ----------
+    function loadImage(url){
+      return new Promise((resolve,reject)=>{
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = ()=>resolve(img);
+        img.onerror = ()=>reject(new Error("Image failed: " + url));
+        img.src = url;
+      });
+    }
+
+    function canvasFromImage(img, maxDim=1024){
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(2, Math.floor(img.width * scale));
+      const h = Math.max(2, Math.floor(img.height * scale));
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently:true });
+      ctx.drawImage(img, 0, 0, w, h);
+      return { c, ctx, w, h };
+    }
+
+    // ---------- height + mask generation (heuristics, fast, local) ----------
+    function blurPass(data, w, h){
+      // cheap 3x3 blur on single channel data in-place (Uint8ClampedArray)
+      const out = new Uint8ClampedArray(data.length);
+      const idx = (x,y)=>y*w+x;
+      for(let y=1;y<h-1;y++){
+        for(let x=1;x<w-1;x++){
+          let s=0;
+          s += data[idx(x-1,y-1)] + data[idx(x,y-1)] + data[idx(x+1,y-1)];
+          s += data[idx(x-1,y  )] + data[idx(x,y  )] + data[idx(x+1,y  )];
+          s += data[idx(x-1,y+1)] + data[idx(x,y+1)] + data[idx(x+1,y+1)];
+          out[idx(x,y)] = (s/9)|0;
+        }
+      }
+      data.set(out);
+    }
+
+    function sobelMag(gray, w, h){
+      const out = new Uint8ClampedArray(w*h);
+      const idx = (x,y)=>y*w+x;
+      for(let y=1;y<h-1;y++){
+        for(let x=1;x<w-1;x++){
+          const gx =
+            -1*gray[idx(x-1,y-1)] + 1*gray[idx(x+1,y-1)] +
+            -2*gray[idx(x-1,y  )] + 2*gray[idx(x+1,y  )] +
+            -1*gray[idx(x-1,y+1)] + 1*gray[idx(x+1,y+1)];
+          const gy =
+            -1*gray[idx(x-1,y-1)] + -2*gray[idx(x,y-1)] + -1*gray[idx(x+1,y-1)] +
+             1*gray[idx(x-1,y+1)] +  2*gray[idx(x,y+1)] +  1*gray[idx(x+1,y+1)];
+          const m = Math.min(255, Math.sqrt(gx*gx + gy*gy));
+          out[idx(x,y)] = m|0;
+        }
+      }
+      return out;
+    }
+
+    function generateHeightAndMask(frontImg){
+      // height: base from luminance + edge emphasis
+      // mask: detect “subject” as high-detail (edges) and reduce holo there
+      const { c, ctx, w, h } = canvasFromImage(frontImg, 1024);
+      const img = ctx.getImageData(0,0,w,h);
+      const px = img.data;
+
+      const gray = new Uint8ClampedArray(w*h);
+      for(let i=0, p=0; i<gray.length; i++, p+=4){
+        const r=px[p], g=px[p+1], b=px[p+2];
+        gray[i] = (0.2126*r + 0.7152*g + 0.0722*b)|0;
+      }
+
+      // edges
+      const edges = sobelMag(gray,w,h);
+
+      // smooth edges a bit
+      blurPass(edges,w,h);
+      blurPass(edges,w,h);
+
+      // height combine
+      const height = new Uint8ClampedArray(w*h);
+      for(let i=0;i<height.length;i++){
+        // base relief + edges
+        const v = (0.65*gray[i] + 0.55*edges[i]);
+        height[i] = Math.max(0, Math.min(255, v))|0;
+      }
+      blurPass(height,w,h);
+
+      // mask (subject protect): high edge density -> higher mask value (protect more)
+      // We invert later in shader (mask=1 means reduce holo).
+      const mask = new Uint8ClampedArray(w*h);
+      // compute local threshold
+      let mean=0;
+      for(let i=0;i<edges.length;i++) mean += edges[i];
+      mean /= edges.length;
+
+      for(let i=0;i<mask.length;i++){
+        const e = edges[i];
+        // aggressive subject selection: edges above mean
+        let m = (e - mean) * 2.2 + 110;
+        m = Math.max(0, Math.min(255, m));
+        // also treat very bright spec highlights as likely background (slightly lower protect)
+        if(gray[i] > 235) m *= 0.7;
+        mask[i] = m|0;
+      }
+      // blur + expand
+      blurPass(mask,w,h); blurPass(mask,w,h);
+
+      // micro-emboss lines (non-tiling-ish): rotate + warp via simple hash noise in shader; here we just provide height.
+      // Return canvases
+      const hC = document.createElement("canvas");
+      hC.width=w; hC.height=h;
+      const hCtx = hC.getContext("2d");
+      const hImg = hCtx.createImageData(w,h);
+      for(let i=0, p=0;i<height.length;i++,p+=4){
+        const v=height[i];
+        hImg.data[p]=v; hImg.data[p+1]=v; hImg.data[p+2]=v; hImg.data[p+3]=255;
+      }
+      hCtx.putImageData(hImg,0,0);
+
+      const mC = document.createElement("canvas");
+      mC.width=w; mC.height=h;
+      const mCtx = mC.getContext("2d");
+      const mImg = mCtx.createImageData(w,h);
+      for(let i=0, p=0;i<mask.length;i++,p+=4){
+        const v=mask[i];
+        mImg.data[p]=v; mImg.data[p+1]=v; mImg.data[p+2]=v; mImg.data[p+3]=255;
+      }
+      mCtx.putImageData(mImg,0,0);
+
+      return { heightCanvas:hC, maskCanvas:mC };
+    }
+
+    function texFromCanvas(c){
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      t.needsUpdate = true;
+      // NOTE: CanvasTexture default flipY = false in three
+      return t;
+    }
+
+    function texFromImage(img){
+      const t = new THREE.Texture(img);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      t.needsUpdate = true;
+      // IMPORTANT: keep orientation correct (not upside-down)
+      t.flipY = false;
+      return t;
+    }
+
+    // ---------- shader material (front) ----------
+    const uniforms = {
+      uFront: { value: null },
+      uBack:  { value: null },
+      uHeight:{ value: null },
+      uMask:  { value: null },
+
+      uEmboss: { value: 2.2 },
+      uHolo:   { value: 2.1 },
+      uBand:   { value: 0.25 },
+      uGrain:  { value: 1.25 },
+      uBorderFoil: { value: 1.0 },
+
+      uEnableHolo: { value: 1 },
+      uEnableHeight:{ value: 1 },
+      uEnableMask: { value: 1 },
+
+      uTime: { value: 0 },
+      uCamPos: { value: new THREE.Vector3() }
+    };
+
+    const frontMat = new THREE.ShaderMaterial({
+      uniforms,
+      transparent: false,
+      side: THREE.FrontSide,
+      vertexShader: /* glsl */`
+        varying vec2 vUv;
+        varying vec3 vWorldPos;
+        varying vec3 vNormalW;
+        void main(){
+          vUv = uv;
+          vec4 wp = modelMatrix * vec4(position,1.0);
+          vWorldPos = wp.xyz;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        varying vec2 vUv;
+        varying vec3 vWorldPos;
+        varying vec3 vNormalW;
+
+        uniform sampler2D uFront;
+        uniform sampler2D uHeight;
+        uniform sampler2D uMask;
+
+        uniform float uEmboss;
+        uniform float uHolo;
+        uniform float uBand;
+        uniform float uGrain;
+        uniform float uBorderFoil;
+
+        uniform float uEnableHolo;
+        uniform float uEnableHeight;
+        uniform float uEnableMask;
+
+        uniform float uTime;
+        uniform vec3 uCamPos;
+
+        // cheap hash
+        float hash12(vec2 p){
+          vec3 p3  = fract(vec3(p.xyx) * .1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
+
+        // micro-emboss lines that follow image but avoid obvious tiling
+        float microLines(vec2 uv){
+          float a = 1.25 + 0.25*sin(uTime*0.15);
+          mat2 R = mat2(cos(a),-sin(a),sin(a),cos(a));
+          vec2 p = (uv - 0.5);
+          p = R * p;
+          // warp
+          float n = hash12(uv*37.0 + uTime*0.03);
+          p += (n-0.5) * 0.02;
+          float f = 900.0; // line frequency
+          float s = sin((p.y)*f);
+          return 0.5 + 0.5*s;
+        }
+
+        // compute pseudo-normal from height map (screen-space sampling)
+        vec3 normalFromHeight(vec2 uv){
+          float h = texture2D(uHeight, uv).r;
+          float hx = texture2D(uHeight, uv + vec2(1.0/1024.0, 0.0)).r;
+          float hy = texture2D(uHeight, uv + vec2(0.0, 1.0/1024.0)).r;
+          vec3 n = normalize(vec3(h - hx, h - hy, 0.06));
+          return n;
+        }
+
+        void main(){
+          vec4 base = texture2D(uFront, vUv);
+
+          // Height & micro-emboss
+          vec3 nW = normalize(vNormalW);
+          if(uEnableHeight > 0.5 && uHeight != sampler2D(0)){
+            vec3 nh = normalFromHeight(vUv);
+            float ml = microLines(vUv);
+            // combine: image-guided relief + lines
+            vec3 bump = normalize(vec3(nh.xy * (0.6 + 0.4*ml) * uEmboss, 1.0));
+            // rotate bump into world-ish by blending with world normal
+            nW = normalize(nW + vec3(bump.xy, 0.0) * 0.55);
+          }
+
+          // Lighting
+          vec3 V = normalize(uCamPos - vWorldPos);
+          float NdotV = clamp(dot(nW, V), 0.0, 1.0);
+
+          // Foil mask (protect subject)
+          float protect = 0.0;
+          if(uEnableMask > 0.5){
+            protect = texture2D(uMask, vUv).r; // 0..1
+          }
+
+          // Border Foil: fade foil near edges if desired
+          float border = 1.0;
+          if(uBorderFoil < 0.999){
+            float m = min(min(vUv.x, 1.0-vUv.x), min(vUv.y, 1.0-vUv.y));
+            border = smoothstep(0.02, 0.12, m); // 0 near edges
+            border = mix(border, 1.0, uBorderFoil); // uBorderFoil=1 => always 1
+          }
+
+          // Holo bands (wide + view dependent)
+          float bands = 0.0;
+          if(uEnableHolo > 0.5){
+            float ang = atan(V.y, V.x);
+            float sweep = (vUv.x*1.15 + vUv.y*0.35) + 0.08*sin(uTime*0.25);
+            float b = sin((sweep + ang*0.12) * (6.28318 / max(0.02,uBand)));
+            bands = 0.5 + 0.5*b;
+          }
+
+          // Grain
+          float g = 0.0;
+          if(uEnableHolo > 0.5){
+            float h = hash12(vUv*vec2(1400.0, 900.0) + uTime*0.02);
+            g = (h - 0.5) * 0.25 * uGrain;
+          }
+
+          // Spectral-ish color
+          vec3 holoCol = vec3(
+            0.55 + 0.45*sin(6.28318*(bands + 0.00)),
+            0.55 + 0.45*sin(6.28318*(bands + 0.33)),
+            0.55 + 0.45*sin(6.28318*(bands + 0.66))
+          );
+
+          // Reduce holo where subject is protected
+          float holoAmt = uHolo * border * (1.0 - protect);
+
+          // Fresnel-ish boost for realism
+          float fres = pow(1.0 - NdotV, 2.0);
+
+          vec3 color = base.rgb;
+
+          // Apply holo as additive + slight screen blend
+          color += holoCol * (0.18*holoAmt) * (0.35 + 0.65*fres);
+          color = mix(color, 1.0 - (1.0-color)*(1.0 - holoCol), 0.10*holoAmt);
+
+          // Grain modulation
+          color += g * (0.35 + 0.65*fres);
+
+          // subtle spec highlight
+          float spec = pow(max(0.0, NdotV), 32.0);
+          color += vec3(1.0) * spec * 0.08;
+
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `
+    });
+
+    // ---------- back material ----------
+    const backMat = new THREE.MeshStandardMaterial({
+      map: null,
+      roughness: 0.55,
+      metalness: 0.10
+    });
+
+    // sides
+    const sideMat = new THREE.MeshStandardMaterial({
+      color: 0x0e0f13,
+      roughness: 0.85,
+      metalness: 0.05
+    });
+
+    // ExtrudeGeometry creates multiple groups: (0=front, 1=sides, 2=back) typical.
+    // We'll assign [front, side, back]
+    const cardMesh = new THREE.Mesh(cardGeo, [frontMat, sideMat, backMat]);
+    cardMesh.rotation.x = -0.05;
+    scene.add(cardMesh);
+
+    // ---------- UI hooks ----------
+    const UI = {
+      preset: document.getElementById("preset"),
+      reload: document.getElementById("reload"),
+      resetAll: document.getElementById("resetAll"),
+      resetView: document.getElementById("resetView"),
+      frontFile: document.getElementById("frontFile"),
+      heightFile: document.getElementById("heightFile"),
+      fxHolo: document.getElementById("fxHolo"),
+      fxHeight: document.getElementById("fxHeight"),
+      fxMask: document.getElementById("fxMask"),
+      emboss: document.getElementById("emboss"),
+      holo: document.getElementById("holo"),
+      band: document.getElementById("band"),
+      grain: document.getElementById("grain"),
+      borderFoil: document.getElementById("borderFoil"),
+      exportHeight: document.getElementById("exportHeight"),
+      exportMask: document.getElementById("exportMask"),
+      toggleLog: document.getElementById("toggleLog"),
+    };
+
+    UI.toggleLog.onclick = () => {
+      dbgBox.style.display = (dbgBox.style.display === "none") ? "block" : "none";
+    };
+
+    UI.resetView.onclick = () => {
       controls.target.set(0, 0.02, 0);
-      camera.position.set(0.0, 0.06, 1.55);
+      camera.position.set(0.0, 0.05, 1.55);
       controls.update();
     };
+
+    function resetUI(){
+      UI.fxHolo.checked = true;
+      UI.fxHeight.checked = true;
+      UI.fxMask.checked = true;
+      UI.emboss.value = "2.20";
+      UI.holo.value = "2.10";
+      UI.band.value = "0.25";
+      UI.grain.value = "1.25";
+      UI.borderFoil.value = "1.00";
+      applyUniformsFromUI();
+    }
+
+    UI.resetAll.onclick = () => {
+      resetUI();
+      loadPreset(UI.preset.value);
+      setStatus("Reset");
+      log("✓ Reset done", "ok");
+    };
+
+    function applyUniformsFromUI(){
+      uniforms.uEmboss.value = parseFloat(UI.emboss.value);
+      uniforms.uHolo.value = parseFloat(UI.holo.value);
+      uniforms.uBand.value = parseFloat(UI.band.value);
+      uniforms.uGrain.value = parseFloat(UI.grain.value);
+      uniforms.uBorderFoil.value = parseFloat(UI.borderFoil.value);
+
+      uniforms.uEnableHolo.value = UI.fxHolo.checked ? 1 : 0;
+      uniforms.uEnableHeight.value = UI.fxHeight.checked ? 1 : 0;
+      uniforms.uEnableMask.value = UI.fxMask.checked ? 1 : 0;
+    }
+
+    for(const el of [UI.fxHolo,UI.fxHeight,UI.fxMask,UI.emboss,UI.holo,UI.band,UI.grain,UI.borderFoil]){
+      el.addEventListener("input", applyUniformsFromUI);
+      el.addEventListener("change", applyUniformsFromUI);
+    }
+
+    // ---------- file loader helpers ----------
+    function fileToImage(file){
+      return new Promise((resolve,reject)=>{
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = ()=>{ URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error("Failed to read file: " + file.name)); };
+        img.src = url;
+      });
+    }
+
+    UI.frontFile.onchange = async () => {
+      if(!UI.frontFile.files?.length) return;
+      try{
+        setStatus("Loading front upload…");
+        const img = await fileToImage(UI.frontFile.files[0]);
+        await setFrontImage(img, "upload");
+        setStatus("Ready");
+      }catch(e){
+        log("❌ " + e.message, "err");
+        setStatus("Error");
+      }
+    };
+
+    UI.heightFile.onchange = async () => {
+      if(!UI.heightFile.files?.length) return;
+      try{
+        setStatus("Loading height upload…");
+        const img = await fileToImage(UI.heightFile.files[0]);
+        // convert to canvas texture
+        const { c } = canvasFromImage(img, 1024);
+        const t = texFromCanvas(c);
+        uniforms.uHeight.value = t;
+        setStatus("Ready");
+        log("✓ Height uploaded", "ok");
+      }catch(e){
+        log("❌ " + e.message, "err");
+        setStatus("Error");
+      }
+    };
+
+    // ---------- set textures ----------
+    let lastGen = { heightCanvas:null, maskCanvas:null };
+
+    async function setFrontImage(img, label="front"){
+      const t = texFromImage(img);
+      // Important: with flipY=false we want UVs that match image orientation.
+      t.needsUpdate = true;
+
+      uniforms.uFront.value = t;
+
+      // auto generate height/mask if no uploaded height
+      const gen = generateHeightAndMask(img);
+      lastGen = gen;
+      uniforms.uHeight.value = texFromCanvas(gen.heightCanvas);
+      uniforms.uMask.value   = texFromCanvas(gen.maskCanvas);
+
+      log(`✓ Front set (${label}) · auto height/mask generated`, "ok");
+    }
+
+    async function setBackImage(img){
+      const t = texFromImage(img);
+      t.needsUpdate = true;
+      backMat.map = t;
+      backMat.needsUpdate = true;
+      log("✓ Back set", "ok");
+    }
+
+    // ---------- preset loading ----------
+    async function loadPreset(which){
+      dbgText.textContent = "";
+      log("Preset: " + which);
+      applyUniformsFromUI();
+      try{
+        setStatus("Loading images…");
+
+        const [frontImg, backImg] = await Promise.all([
+          loadImage(PRESETS[which]),
+          loadImage(PATH_BACK)
+        ]);
+
+        log("✓ Loaded: " + PRESETS[which], "ok");
+        log("✓ Loaded: " + PATH_BACK, "ok");
+
+        await setFrontImage(frontImg, which);
+        await setBackImage(backImg);
+
+        // Ensure card faces the camera with correct orientation (fix upside-down)
+        // We used flipY=false; ensure UV orientation matches.
+        // If your art ever appears flipped, swap these:
+        // cardMesh.rotation.z = Math.PI; // (not needed here)
+        setStatus("Ready");
+      }catch(e){
+        log("❌ " + e.message, "err");
+        setStatus("Error");
+      }
+    }
+
+    UI.reload.onclick = () => loadPreset(UI.preset.value);
+    UI.preset.onchange = UI.reload.onclick;
+
+    // ---------- exports ----------
+    function downloadCanvasPNG(c, filename){
+      c.toBlob((blob)=>{
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    }
+
+    UI.exportHeight.onclick = () => {
+      if(!lastGen.heightCanvas){ log("❌ No generated height to export yet.", "err"); return; }
+      downloadCanvasPNG(lastGen.heightCanvas, "height.png");
+      log("✓ Exported height.png", "ok");
+    };
+
+    UI.exportMask.onclick = () => {
+      if(!lastGen.maskCanvas){ log("❌ No generated foil mask to export yet.", "err"); return; }
+      downloadCanvasPNG(lastGen.maskCanvas, "foil-mask.png");
+      log("✓ Exported foil-mask.png", "ok");
+    };
+
+    // ---------- animation loop ----------
+    const clock = new THREE.Clock();
+    function animate(){
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+      uniforms.uTime.value = t;
+      uniforms.uCamPos.value.copy(camera.position);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
 
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth/window.innerHeight;
@@ -186,58 +824,10 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    setStatus("Ready");
-
-    function animate(){
-      requestAnimationFrame(animate);
-      controls.update();
-      cube.rotation.y += 0.01;
-      cube.rotation.x += 0.006;
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // Quick sanity check of your asset paths (shows failures in debug)
-    const texLoader = new THREE.TextureLoader();
-    function testLoad(url){
-      return new Promise((resolve,reject)=>{
-        texLoader.load(url, ()=>resolve(true), undefined, ()=>reject(new Error("Image failed: " + url)));
-      });
-    }
-
-    const PRESETS = {
-      ray:   "./assets/presets/mega-rayquaza-front.JPG",
-      blast: "./assets/presets/mega-blastoise-front.JPG"
-    };
-    const BACK = "./assets/pokemon-back.jpg";
-
-    async function checkAssets(){
-      try{
-        await testLoad(BACK);
-        debug("✓ Loaded: " + BACK, "ok");
-      }catch(e){ debug("❌ " + e.message, "err"); }
-
-      try{
-        await testLoad(PRESETS.ray);
-        debug("✓ Loaded: " + PRESETS.ray, "ok");
-      }catch(e){ debug("❌ " + e.message, "err"); }
-
-      try{
-        await testLoad(PRESETS.blast);
-        debug("✓ Loaded: " + PRESETS.blast, "ok");
-      }catch(e){ debug("❌ " + e.message, "err"); }
-    }
-
-    document.getElementById("reload").onclick = () => {
-      dbgText.textContent = "";
-      debug("Reload clicked.");
-      checkAssets();
-    };
-
-    document.getElementById("preset").onchange = document.getElementById("reload").onclick;
-
-    // auto-run once
-    checkAssets();
+    // ---------- boot ----------
+    resetUI();
+    setStatus("Loading preset…");
+    loadPreset(UI.preset.value);
   </script>
 </body>
 </html>
