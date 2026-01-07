@@ -181,7 +181,7 @@
     <div class="divider"></div>
 
     <div class="small">
-      If it says “Missing: …” in the top bar, that file path is wrong or not committed.
+      If it says “Missing: …” in the top bar, that file path is wrong, case doesn’t match, or it’s not committed.
     </div>
   </div>
 
@@ -190,13 +190,24 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 /* -----------------------------
-   PATHS (MAKE SURE THESE FILES EXIST IN YOUR REPO)
+   PATHS (tries .JPG and .jpg)
 ----------------------------- */
 const PATHS = {
-  backDefault: "assets/pokemon_back.jpg",
-  presets: {
-    rayquaza: "assets/presets/mega-rayquaza-front.jpg",
-    blastoise: "assets/presets/mega-blastoise-front.jpg"
+  backCandidates: [
+    "assets/pokemon-back.JPG",
+    "assets/pokemon-back.jpg",
+    "assets/pokemon_back.JPG",
+    "assets/pokemon_back.jpg"
+  ],
+  presetCandidates: {
+    rayquaza: [
+      "assets/presets/mega-rayquaza-front.JPG",
+      "assets/presets/mega-rayquaza-front.jpg"
+    ],
+    blastoise: [
+      "assets/presets/mega-blastoise-front.JPG",
+      "assets/presets/mega-blastoise-front.jpg"
+    ]
   }
 };
 
@@ -301,6 +312,10 @@ function texFromImage(img,{srgb=true}={}){
   tex.minFilter=THREE.LinearMipmapLinearFilter;
   tex.magFilter=THREE.LinearFilter;
   if (srgb) tex.colorSpace=THREE.SRGBColorSpace;
+
+  // IMPORTANT: keep image textures consistent
+  tex.flipY = true;
+
   return tex;
 }
 function texFromCanvas(c){
@@ -311,25 +326,32 @@ function texFromCanvas(c){
   tex.minFilter=THREE.LinearFilter;
   tex.magFilter=THREE.LinearFilter;
   tex.colorSpace=THREE.NoColorSpace;
-  tex.flipY=false; // important for height/mask alignment
+
+  // FIX: match Image textures so holo/height isn't upside-down
+  tex.flipY = true;
+
   return tex;
 }
 
-async function loadImageURL(url){
-  // HEAD check so we can report missing file paths clearly
-  try{
-    const res = await fetch(url, { method:"HEAD", cache:"no-store" });
-    if(!res.ok) throw new Error(String(res.status));
-  }catch(e){
-    throw new Error("Missing: " + url);
+async function headOK(url){
+  const res = await fetch(url, { method:"HEAD", cache:"no-store" });
+  return res.ok;
+}
+async function loadFirstExisting(candidates){
+  for(const url of candidates){
+    try{
+      if(!(await headOK(url))) continue;
+      const img = await new Promise((resolve,reject)=>{
+        const im=new Image();
+        im.crossOrigin="anonymous";
+        im.onload=()=>resolve(im);
+        im.onerror=()=>reject(new Error("Decode failed: "+url));
+        im.src=url;
+      });
+      return { img, url };
+    }catch(e){ /* try next */ }
   }
-  return new Promise((resolve,reject)=>{
-    const img=new Image();
-    img.crossOrigin="anonymous";
-    img.onload=()=>resolve(img);
-    img.onerror=()=>reject(new Error("Failed image decode: " + url));
-    img.src=url;
-  });
+  throw new Error("Missing: " + candidates[0]);
 }
 async function loadImageFromFile(file){
   return new Promise((resolve,reject)=>{
@@ -342,7 +364,7 @@ async function loadImageFromFile(file){
 }
 
 /* -----------------------------
-   HEIGHT / FOIL GENERATION (same as before, trimmed)
+   HEIGHT / FOIL (same algorithm)
 ----------------------------- */
 function blurNFloat(src,w,h,r){
   let a=new Float32Array(src);
@@ -688,7 +710,7 @@ function buildCard(frontTex, backTex, heightTex, foilTex){
 }
 
 /* -----------------------------
-   PLACEHOLDER SO WE ALWAYS RENDER
+   PLACEHOLDER + DOWNLOAD
 ----------------------------- */
 function makePlaceholderCanvas(w=1024,h=1434,text="Upload a front image"){
   const c=document.createElement("canvas"); c.width=w; c.height=h;
@@ -741,7 +763,6 @@ document.getElementById("frontFile").addEventListener("change", async (e)=>{
   const img=await loadImageFromFile(f);
   app.frontImg=img;
   app.frontTex=texFromImage(img,{srgb:true});
-  app.frontTex.flipY=true;
 
   if(document.getElementById("autoHeight").checked){
     setTitle("Auto height…");
@@ -803,9 +824,9 @@ document.getElementById("preset").addEventListener("change", async (e)=>{
   const v=e.target.value; if(!v) return;
   try{
     setTitle("Loading preset…");
-    const img=await loadImageURL(PATHS.presets[v]);
+    const { img } = await loadFirstExisting(PATHS.presetCandidates[v]);
     app.frontImg=img;
-    app.frontTex=texFromImage(img,{srgb:true}); app.frontTex.flipY=true;
+    app.frontTex=texFromImage(img,{srgb:true});
     app.heightCanvas=generateHeightFromFront(img);
     app.heightTex=texFromCanvas(app.heightCanvas);
     app.foilCanvas=generateFoilMask(img);
@@ -828,39 +849,33 @@ document.getElementById("btnReset").addEventListener("click", ()=>{
    DEFAULT LOAD (NON-BLOCKING)
 ----------------------------- */
 function startDefaultLoad(){
-  // Always render immediately with placeholder (so you never see a blank screen)
   const ph = makePlaceholderCanvas();
   app.frontImg = ph;
-  app.frontTex = texFromCanvas(ph); app.frontTex.colorSpace = THREE.SRGBColorSpace; app.frontTex.flipY = false;
-  app.heightCanvas = ph;
-  app.heightTex = texFromCanvas(ph);
-  app.foilCanvas = ph;
-  app.foilTex = texFromCanvas(ph);
+  app.frontTex = texFromCanvas(ph); app.frontTex.colorSpace = THREE.SRGBColorSpace;
+  app.heightCanvas = ph; app.heightTex = texFromCanvas(ph);
+  app.foilCanvas = ph; app.foilTex = texFromCanvas(ph);
 
-  // Temporary back if missing
   const backPh = makePlaceholderCanvas(1024,1434,"Back");
-  app.backTex = texFromCanvas(backPh); app.backTex.colorSpace = THREE.SRGBColorSpace; app.backTex.flipY=false;
+  app.backTex = texFromCanvas(backPh); app.backTex.colorSpace = THREE.SRGBColorSpace;
 
   buildCard(app.frontTex, app.backTex, app.heightTex, app.foilTex);
   setTitle("Loading…");
 
-  // Now load real back and preset asynchronously
   (async ()=>{
     try{
-      const backImg = await loadImageURL(PATHS.backDefault);
-      app.backTex = texFromImage(backImg,{srgb:true}); app.backTex.flipY=true;
+      const { img } = await loadFirstExisting(PATHS.backCandidates);
+      app.backTex = texFromImage(img,{srgb:true});
       buildCard(app.frontTex, app.backTex, app.heightTex, app.foilTex);
     }catch(err){
       setTitle(String(err.message || err));
-      // keep placeholder back
     }
   })();
 
   (async ()=>{
     try{
-      const img = await loadImageURL(PATHS.presets.rayquaza);
+      const { img } = await loadFirstExisting(PATHS.presetCandidates.rayquaza);
       app.frontImg=img;
-      app.frontTex=texFromImage(img,{srgb:true}); app.frontTex.flipY=true;
+      app.frontTex=texFromImage(img,{srgb:true});
       app.heightCanvas=generateHeightFromFront(img);
       app.heightTex=texFromCanvas(app.heightCanvas);
       app.foilCanvas=generateFoilMask(img);
@@ -868,7 +883,6 @@ function startDefaultLoad(){
       buildCard(app.frontTex, app.backTex, app.heightTex, app.foilTex);
       setTitle("Mega Rayquaza");
     }catch(err){
-      // If preset missing, don't stall; show helpful error
       setTitle(String(err.message || err));
     }
   })();
