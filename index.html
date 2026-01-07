@@ -3,33 +3,47 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Thin + Front Holo + Height Map + Permanent Back)</title>
+  <title>Card Viewer (Thin + Front Holo + Height/Mask + Presets + Export)</title>
+
   <style>
+    :root { color-scheme: dark; }
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
+
     #ui {
       position: fixed; top: 12px; left: 12px; z-index: 10;
-      background: rgba(0,0,0,.6); color: #fff; padding: 12px; border-radius: 12px;
+      color: #fff;
+      background: rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.10);
+      padding: 10px;
+      border-radius: 14px;
       backdrop-filter: blur(8px);
-      display: grid; gap: 10px; min-width: 320px; max-width: min(92vw, 440px);
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      width: min(440px, calc(100vw - 24px));
     }
-    #ui label { font-size: 12px; opacity: .95; display: grid; gap: 6px; }
-    #ui small { opacity: .75; line-height: 1.25; }
-    #status {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 11px;
-      white-space: pre-wrap;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.08);
+    #uiHeader { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    #uiTitle { display:flex; align-items:center; gap:10px; min-width: 0; }
+    #uiTitle .pill { max-width: 260px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #uiBody { margin-top: 10px; display: grid; gap: 10px; }
+    #ui.collapsed #uiBody { display: none; }
+
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+    label { font-size: 12px; opacity: .95; display: grid; gap: 6px; }
+    small { opacity: .75; line-height: 1.25; }
+
+    input[type="range"] { width: 210px; }
+    input[type="file"], select {
+      width: 100%;
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 170px;
-      overflow: auto;
-      line-height: 1.25;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.12);
+      color: #fff;
+      font-size: 12px;
     }
-    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
-    input[type="range"] { width: 190px; }
+
     button {
       appearance: none;
       border: 1px solid rgba(255,255,255,.16);
@@ -39,16 +53,74 @@
       border-radius: 10px;
       cursor: pointer;
       font-size: 12px;
+      white-space: nowrap;
     }
     button:active { transform: translateY(1px); }
+    button.secondary { background: rgba(255,255,255,.05); }
+    button.danger { border-color: rgba(255,80,80,.25); }
+
     .pill {
       font-size: 11px; opacity: .9;
       background: rgba(255,255,255,.08);
       border: 1px solid rgba(255,255,255,.10);
       padding: 4px 8px; border-radius: 999px;
     }
+
+    #status {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.08);
+      padding: 8px 10px;
+      border-radius: 10px;
+      max-height: 160px;
+      overflow: auto;
+      line-height: 1.25;
+    }
+
+    #presetThumbs {
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    .thumbBtn {
+      width: 56px; height: 80px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      overflow: hidden;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+    .thumbBtn img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display:block;
+    }
+    .thumbBtn span {
+      position: absolute;
+      bottom: 4px;
+      left: 4px;
+      right: 4px;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.10);
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: .95;
+    }
+
+    #hint {
+      display:flex; gap:10px; flex-wrap: wrap; align-items: center;
+    }
   </style>
 
+  <!-- Import map so OrbitControls can import "three" -->
   <script type="importmap">
     {
       "imports": {
@@ -60,69 +132,118 @@
 </head>
 
 <body>
-  <div id="ui">
-    <div id="status">Loading…</div>
-
-    <label>Front image (JPG/PNG)
-      <input id="frontInput" type="file" accept="image/jpeg,image/png" />
-    </label>
-
-    <div class="row">
-      <button id="genHeightBtn">Generate height from front</button>
-      <span class="pill">Fast (no ML)</span>
+  <div id="ui" class="collapsed">
+    <div id="uiHeader">
+      <div id="uiTitle">
+        <button id="toggleUiBtn" title="Toggle UI">☰</button>
+        <span class="pill" id="titlePill">Card Viewer</span>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button id="exportBtn" class="secondary" title="Export PNG">Export</button>
+        <button id="resetBtn" class="secondary" title="Reset view">Reset</button>
+      </div>
     </div>
 
-    <label>Height map (optional override, grayscale JPG/PNG)
-      <input id="heightInput" type="file" accept="image/jpeg,image/png" />
-    </label>
+    <div id="uiBody">
+      <div id="status">Loading…</div>
 
-    <div class="row">
-      <label style="margin:0;">Relief (bump)</label>
-      <input id="bumpSlider" type="range" min="0" max="0.08" step="0.001" value="0.02" />
+      <label>Preset cards (put files in <span class="pill">assets/cards/</span>)
+        <select id="presetSelect"></select>
+      </label>
+
+      <div id="presetThumbs"></div>
+
+      <label>Front image (JPG/PNG)
+        <input id="frontInput" type="file" accept="image/jpeg,image/png" />
+      </label>
+
+      <div class="row3">
+        <button id="genHeightBtn">Generate height</button>
+        <button id="genMaskBtn" class="secondary">Generate foil mask</button>
+        <button id="clearMapsBtn" class="danger">Clear maps</button>
+      </div>
+
+      <label>Height map (optional override, grayscale JPG/PNG)
+        <input id="heightInput" type="file" accept="image/jpeg,image/png" />
+      </label>
+
+      <label>Foil mask (optional, white=foil black=no-foil, JPG/PNG)
+        <input id="maskInput" type="file" accept="image/jpeg,image/png" />
+      </label>
+
+      <div class="row">
+        <label style="margin:0;">Relief (bump)</label>
+        <input id="bumpSlider" type="range" min="0" max="0.12" step="0.001" value="0.03" />
+      </div>
+
+      <div class="row">
+        <label style="margin:0;">Displacement</label>
+        <input id="dispSlider" type="range" min="0" max="0.08" step="0.001" value="0.03" />
+      </div>
+
+      <div class="row">
+        <label style="margin:0;">Holo strength</label>
+        <input id="holoSlider" type="range" min="0" max="1.2" step="0.01" value="0.60" />
+      </div>
+
+      <div class="row">
+        <label style="margin:0;">Holo reacts to height</label>
+        <input id="holoReliefSlider" type="range" min="0" max="3" step="0.01" value="1.20" />
+      </div>
+
+      <div class="row">
+        <label style="margin:0;">Holo band scale</label>
+        <input id="bandSlider" type="range" min="10" max="180" step="1" value="85" />
+      </div>
+
+      <div class="row">
+        <label style="margin:0;">Sparkle</label>
+        <input id="sparkleSlider" type="range" min="0" max="1" step="0.01" value="0.65" />
+      </div>
+
+      <div id="hint">
+        <span class="pill">Back: assets/pokemon-back.jpg</span>
+        <span class="pill">Drag rotate • Scroll zoom • Right-drag pan</span>
+      </div>
+
+      <small>
+        Tips: Use a clean grayscale height map for best results. If auto-height is noisy, lower “Holo reacts to height”
+        or use a manual height map. Foil mask lets you restrict holo to specific regions.
+      </small>
     </div>
-
-    <div class="row">
-      <label style="margin:0;">Holo strength</label>
-      <input id="holoSlider" type="range" min="0" max="1" step="0.01" value="0.55" />
-    </div>
-
-    <div class="row">
-      <label style="margin:0;">Holo reacts to height</label>
-      <input id="holoReliefSlider" type="range" min="0" max="2" step="0.01" value="0.90" />
-    </div>
-
-    <small>
-      Back is permanent: <span class="pill">assets/pokemon-back.jpg</span><br/>
-      Drag to rotate • Scroll to zoom • Right-drag to pan
-    </small>
   </div>
 
   <script type="module">
     import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+    // ---------- Tiny logger ----------
     const statusEl = document.getElementById("status");
     const log = (m) => statusEl.textContent = m + "\n" + statusEl.textContent;
 
     window.addEventListener("error", (e) => log("JS ERROR ❌ " + (e.message || e.error || e)));
     window.addEventListener("unhandledrejection", (e) => log("PROMISE ERROR ❌ " + (e.reason?.message || e.reason || e)));
 
-    // WebGL check
+    // ---------- UI collapse ----------
+    const ui = document.getElementById("ui");
+    document.getElementById("toggleUiBtn").addEventListener("click", () => ui.classList.toggle("collapsed"));
+
+    // ---------- WebGL check ----------
     {
       const c = document.createElement("canvas");
       const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
-      if (!gl) { log("WebGL not available ❌"); throw new Error("WebGL not available"); }
+      if (!gl) { alert("WebGL not available"); throw new Error("WebGL not available"); }
       log("WebGL: available ✅");
     }
 
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // ---------- Renderer ----------
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     document.body.appendChild(renderer.domElement);
 
-    // Scene / camera
+    // ---------- Scene / camera ----------
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(0x0b0f14, 2.5, 10);
 
@@ -136,13 +257,13 @@
     controls.maxDistance = 3.0;
     controls.target.set(0, 0.05, 0);
 
-    // Lights
+    // ---------- Lights ----------
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(1.5, 2.0, 1.2); scene.add(key);
     const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
     const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
-    // Card dimensions (thin, no bevel)
+    // ---------- Card dimensions (thin, no bevel) ----------
     const cardWidth = 0.63;
     const cardHeight = 0.88;
     const thickness = 0.004;
@@ -160,7 +281,6 @@
       return s;
     }
 
-    // Extrude edge, remove caps (no bevel)
     function extrudeSidesOnly(shape) {
       const full = new THREE.ExtrudeGeometry(shape, {
         depth: thickness,
@@ -192,12 +312,11 @@
       return out;
     }
 
-    // Rounded face geometry (higher detail for bump/foil)
+    // High tessellation so displacement can be exaggerated
     function makeRoundedFaceGeometry() {
       const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-      const g = new THREE.ShapeGeometry(shape, 64);
+      const g = new THREE.ShapeGeometry(shape, 140);
 
-      // UVs from XY bounds
       g.computeBoundingBox();
       const bb = g.boundingBox;
       const size = new THREE.Vector3();
@@ -219,16 +338,15 @@
     const sideGeom = extrudeSidesOnly(shape);
     const faceGeom = makeRoundedFaceGeometry();
 
-    // Materials
+    // ---------- Materials / textures ----------
+    const loader = new THREE.TextureLoader();
+
     const edgeMat = new THREE.MeshStandardMaterial({
       color: 0x2a2f38,
       roughness: 0.95,
       metalness: 0.0
     });
 
-    const loader = new THREE.TextureLoader();
-
-    // Permanent back texture from repo
     const permanentBack = loader.load(
       "./assets/pokemon-back.jpg",
       () => log("Back texture loaded ✅"),
@@ -237,9 +355,8 @@
     );
     permanentBack.colorSpace = THREE.SRGBColorSpace;
     permanentBack.anisotropy = 8;
-    permanentBack.flipY = true; // if back is upside down, change to false
+    permanentBack.flipY = true; // if your back is upside down, set false
 
-    // Default front placeholder
     const defaultFront = loader.load(
       "https://threejs.org/examples/textures/uv_grid_opengl.jpg",
       () => log("Default front loaded ✅")
@@ -248,18 +365,26 @@
     defaultFront.anisotropy = 8;
     defaultFront.flipY = false;
 
-    // Default 1x1 mid-gray height texture
+    // Default height and foil mask
     const defaultHeight = new THREE.DataTexture(new Uint8Array([128]), 1, 1, THREE.RedFormat);
     defaultHeight.colorSpace = THREE.NoColorSpace;
     defaultHeight.flipY = true;
     defaultHeight.needsUpdate = true;
 
+    const defaultMask = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat); // fully on
+    defaultMask.colorSpace = THREE.NoColorSpace;
+    defaultMask.flipY = true;
+    defaultMask.needsUpdate = true;
+
     const frontMat = new THREE.MeshStandardMaterial({
       map: defaultFront,
-      roughness: 0.55,
-      metalness: 0.05,
+      roughness: 0.52,
+      metalness: 0.06,
       bumpMap: defaultHeight,
-      bumpScale: 0.02
+      bumpScale: 0.03,
+      displacementMap: defaultHeight,
+      displacementScale: 0.03,
+      displacementBias: -0.02
     });
 
     const backMat = new THREE.MeshStandardMaterial({
@@ -268,7 +393,7 @@
       metalness: 0.02
     });
 
-    // Card group
+    // ---------- Card assembly ----------
     const cardGroup = new THREE.Group();
     scene.add(cardGroup);
 
@@ -298,17 +423,20 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---- FRONT-ONLY HOLO FILM (reacts to height map) ----
-    function makeHoloFilmMaterial(heightTex) {
+    // ---------- Holo film (height + mask aware) ----------
+    function makeHoloFilmMaterial(heightTex, maskTex) {
       return new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         uniforms: {
           uTime: { value: 0.0 },
-          uStrength: { value: 0.55 },
+          uStrength: { value: 0.60 },
           uHeight: { value: heightTex },
-          uRelief: { value: 0.90 }
+          uMask: { value: maskTex },
+          uRelief: { value: 1.20 },
+          uBandScale: { value: 85.0 },
+          uSparkle: { value: 0.65 }
         },
         vertexShader: `
           varying vec2 vUv;
@@ -337,7 +465,10 @@
           uniform float uTime;
           uniform float uStrength;
           uniform sampler2D uHeight;
+          uniform sampler2D uMask;
           uniform float uRelief;
+          uniform float uBandScale;
+          uniform float uSparkle;
 
           float hash21(vec2 p){
             p = fract(p*vec2(123.34, 456.21));
@@ -346,8 +477,12 @@
           }
 
           void main() {
+            float mask = texture2D(uMask, vUv).r;
+            if (mask < 0.01) discard;
+
+            // Height gradient -> perturbed normal (foil reacts to relief)
             float eps = 0.0015;
-            float hC = texture2D(uHeight, vUv).r;
+            float hC  = texture2D(uHeight, vUv).r;
             float hX1 = texture2D(uHeight, vUv + vec2(eps, 0.0)).r;
             float hX0 = texture2D(uHeight, vUv - vec2(eps, 0.0)).r;
             float hY1 = texture2D(uHeight, vUv + vec2(0.0, eps)).r;
@@ -358,19 +493,22 @@
 
             vec3 N = normalize(vN + (-dx * uRelief) * vTx + (-dy * uRelief) * vTy);
             vec3 V = normalize(vV);
-
             float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
 
-            float bands = sin(vUv.y*70.0 + vUv.x*18.0 + uTime*1.6 + hC*6.0) * 0.5 + 0.5;
-            float diag  = sin(vUv.x*90.0 + vUv.y*55.0 + uTime*0.9 + hC*4.0) * 0.5 + 0.5;
+            // Bands + diagonal + sparkle (modern-ish foil)
+            float bs = uBandScale;
+            float bands = sin(vUv.y*bs + vUv.x*(bs*0.26) + uTime*1.6 + hC*6.0) * 0.5 + 0.5;
+            float diag  = sin(vUv.x*(bs*1.05) + vUv.y*(bs*0.65) + uTime*0.9 + hC*4.0) * 0.5 + 0.5;
 
-            float sparkle = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2 + hC*2.0)) * 0.7;
+            float sp = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2 + hC*2.0));
+            float sparkle = sp * 0.8 * uSparkle;
 
             vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
             vec3 film = rainbow*(0.08 + 0.92*fres) + rainbow*(diag*0.07) + sparkle;
 
+            // Height gating so ridges catch more foil + mask controls region
             float ridge = smoothstep(0.45, 0.75, hC);
-            float a = clamp((0.10 + 0.9*fres) * uStrength * (0.85 + 0.35*ridge), 0.0, 1.0);
+            float a = clamp((0.10 + 0.9*fres) * uStrength * (0.85 + 0.35*ridge) * mask, 0.0, 1.0);
 
             gl_FragColor = vec4(film * a, a);
           }
@@ -378,7 +516,7 @@
       });
     }
 
-    const frontFilmMat = makeHoloFilmMaterial(defaultHeight);
+    const frontFilmMat = makeHoloFilmMaterial(defaultHeight, defaultMask);
     frontFilmMat.polygonOffset = true;
     frontFilmMat.polygonOffsetFactor = -1;
     frontFilmMat.polygonOffsetUnits = -1;
@@ -387,8 +525,8 @@
     frontFilm.position.z = Z_FILM;
     cardGroup.add(frontFilm);
 
-    // ---- iOS-safe file loading ----
-    let lastFrontImage = null; // used for Generate Height
+    // ---------- Helpers: file decode & textures ----------
+    let lastFrontImage = null;
 
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
@@ -432,7 +570,49 @@
       return tex;
     }
 
-    // ---- Option A: Generate height from front (fast, no ML) ----
+    function canvasToNoColorTexture(canvas) {
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.NoColorSpace;
+      tex.anisotropy = 8;
+      tex.flipY = true;
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    function applyFrontTexture(tex) {
+      if (frontMat.map) frontMat.map.dispose();
+      frontMat.map = tex;
+      frontMat.needsUpdate = true;
+      if (tex.image) lastFrontImage = tex.image;
+      document.getElementById("titlePill").textContent = "Custom front";
+    }
+
+    function applyHeightTexture(tex) {
+      if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
+      frontMat.bumpMap = tex;
+      frontMat.displacementMap = tex;
+
+      frontMat.bumpScale = parseFloat(bumpSlider.value);
+      frontMat.displacementScale = parseFloat(dispSlider.value);
+      frontMat.needsUpdate = true;
+
+      frontFilmMat.uniforms.uHeight.value = tex;
+    }
+
+    function applyMaskTexture(tex) {
+      frontFilmMat.uniforms.uMask.value = tex;
+    }
+
+    function clearMaps() {
+      frontMat.bumpMap = defaultHeight;
+      frontMat.displacementMap = defaultHeight;
+      frontMat.needsUpdate = true;
+      frontFilmMat.uniforms.uHeight.value = defaultHeight;
+      frontFilmMat.uniforms.uMask.value = defaultMask;
+      log("Maps cleared ✅");
+    }
+
+    // ---------- Option A: Generate height from front ----------
     function generateHeightFromImage(img, maxSize = 1024) {
       const w0 = img.naturalWidth || img.width;
       const h0 = img.naturalHeight || img.height;
@@ -448,14 +628,14 @@
       const im = ctx.getImageData(0, 0, w, h);
       const d = im.data;
 
-      // 1) luminance
+      // luminance
       const lum = new Float32Array(w * h);
       for (let i = 0, p = 0; p < lum.length; p++, i += 4) {
         const r = d[i] / 255, g = d[i+1] / 255, b = d[i+2] / 255;
         lum[p] = 0.2126*r + 0.7152*g + 0.0722*b;
       }
 
-      // 2) blur (3x3 box)
+      // blur (3x3 box) x2 for smoother height
       function blur3x3(src) {
         const out = new Float32Array(src.length);
         for (let y = 0; y < h; y++) {
@@ -474,9 +654,10 @@
         }
         return out;
       }
-      const base = blur3x3(lum);
+      const base1 = blur3x3(lum);
+      const base = blur3x3(base1);
 
-      // 3) edge magnitude (Sobel-ish)
+      // Sobel-ish edges
       const edge = new Float32Array(w * h);
       for (let y = 1; y < h-1; y++) {
         for (let x = 1; x < w-1; x++) {
@@ -491,11 +672,12 @@
         }
       }
 
-      // 4) combine + normalize
+      // combine + normalize
       const height = new Float32Array(w * h);
       let mn = 1e9, mx = -1e9;
       for (let i = 0; i < height.length; i++) {
-        const v = base[i] * 0.85 + edge[i] * 0.60;
+        // heavier base makes more "plate" height; edges add relief detail
+        const v = base[i] * 0.95 + edge[i] * 0.55;
         height[i] = v;
         mn = Math.min(mn, v);
         mx = Math.max(mx, v);
@@ -512,22 +694,78 @@
       return c;
     }
 
-    function canvasToHeightTexture(canvas) {
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.colorSpace = THREE.NoColorSpace;
-      tex.anisotropy = 8;
-      tex.flipY = true; // match our shader/bump expectations
-      tex.needsUpdate = true;
-      return tex;
+    // Generate foil mask from front (simple: bright & saturated areas)
+    function generateFoilMaskFromImage(img, maxSize = 1024) {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      const s = Math.min(1, maxSize / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * s));
+      const h = Math.max(1, Math.round(h0 * s));
+
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const im = ctx.getImageData(0, 0, w, h);
+      const d = im.data;
+
+      // crude "foil region" heuristic:
+      // - prefer higher saturation and brightness
+      // - then blur for smooth mask
+      const m = new Float32Array(w*h);
+      for (let i=0, p=0; p<m.length; p++, i+=4) {
+        const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+        const maxc = Math.max(r,g,b), minc = Math.min(r,g,b);
+        const v = maxc;
+        const sat = (maxc === 0) ? 0 : (maxc - minc) / maxc;
+        // tune: more weight on saturation so background border doesn't get foiled as much
+        m[p] = Math.min(1.0, (v*0.55 + sat*0.75));
+      }
+
+      function blur3x3(src) {
+        const out = new Float32Array(src.length);
+        for (let y=0; y<h; y++) for (let x=0; x<w; x++) {
+          let sum=0, count=0;
+          for (let oy=-1; oy<=1; oy++) for (let ox=-1; ox<=1; ox++) {
+            const xx=x+ox, yy=y+oy;
+            if (xx<0||xx>=w||yy<0||yy>=h) continue;
+            sum += src[yy*w+xx]; count++;
+          }
+          out[y*w+x] = sum/count;
+        }
+        return out;
+      }
+      const b1 = blur3x3(m);
+      const b2 = blur3x3(b1);
+
+      // apply threshold + soft knee
+      const out = ctx.createImageData(w, h);
+      for (let i=0, p=0; p<b2.length; p++, i+=4) {
+        const v = b2[p];
+        const soft = Math.max(0, Math.min(1, (v - 0.35) / (0.85 - 0.35)));
+        const g = Math.round(soft * 255);
+        out.data[i]=g; out.data[i+1]=g; out.data[i+2]=g; out.data[i+3]=255;
+      }
+      ctx.putImageData(out, 0, 0);
+      return c;
     }
 
-    // ---- UI Wiring ----
+    // ---------- UI wiring ----------
     const bumpSlider = document.getElementById("bumpSlider");
+    const dispSlider = document.getElementById("dispSlider");
     const holoSlider = document.getElementById("holoSlider");
     const holoReliefSlider = document.getElementById("holoReliefSlider");
+    const bandSlider = document.getElementById("bandSlider");
+    const sparkleSlider = document.getElementById("sparkleSlider");
 
     bumpSlider.addEventListener("input", () => {
       frontMat.bumpScale = parseFloat(bumpSlider.value);
+      frontMat.needsUpdate = true;
+    });
+
+    dispSlider.addEventListener("input", () => {
+      frontMat.displacementScale = parseFloat(dispSlider.value);
       frontMat.needsUpdate = true;
     });
 
@@ -539,29 +777,34 @@
       frontFilmMat.uniforms.uRelief.value = parseFloat(holoReliefSlider.value);
     });
 
+    bandSlider.addEventListener("input", () => {
+      frontFilmMat.uniforms.uBandScale.value = parseFloat(bandSlider.value);
+    });
+
+    sparkleSlider.addEventListener("input", () => {
+      frontFilmMat.uniforms.uSparkle.value = parseFloat(sparkleSlider.value);
+    });
+
+    document.getElementById("clearMapsBtn").addEventListener("click", clearMaps);
+
     document.getElementById("frontInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-
       try {
         log(`Front picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
         const img0 = await decodeImageFromFile(file);
         const img = downscaleImageToMax(img0, 2048);
-
-        // Wait if downscaled
         const finalImg = await new Promise((resolve, reject) => {
           if (img === img0) return resolve(img0);
           img.onload = () => resolve(img);
           img.onerror = () => reject(new Error("Downscaled image decode failed"));
         });
-
         lastFrontImage = finalImg;
 
         const tex = imageToTexture(finalImg, { isData:false });
-        if (frontMat.map) frontMat.map.dispose();
-        frontMat.map = tex;
-        frontMat.needsUpdate = true;
+        applyFrontTexture(tex);
 
+        document.getElementById("titlePill").textContent = file.name;
         log(`Front applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
       } catch (err) {
         log("Front failed ❌ " + err.message);
@@ -572,27 +815,17 @@
     document.getElementById("heightInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-
       try {
         log(`Height picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
         const img0 = await decodeImageFromFile(file);
         const img = downscaleImageToMax(img0, 2048);
-
         const finalImg = await new Promise((resolve, reject) => {
           if (img === img0) return resolve(img0);
           img.onload = () => resolve(img);
           img.onerror = () => reject(new Error("Downscaled image decode failed"));
         });
-
         const tex = imageToTexture(finalImg, { isData:true });
-
-        if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
-        frontMat.bumpMap = tex;
-        frontMat.bumpScale = parseFloat(bumpSlider.value);
-        frontMat.needsUpdate = true;
-
-        frontFilmMat.uniforms.uHeight.value = tex;
-
+        applyHeightTexture(tex);
         log(`Height applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
       } catch (err) {
         log("Height failed ❌ " + err.message);
@@ -600,33 +833,208 @@
       }
     });
 
-    document.getElementById("genHeightBtn").addEventListener("click", () => {
-      if (!lastFrontImage) {
-        alert("Upload a front image first.");
-        return;
+    document.getElementById("maskInput").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        log(`Mask picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+        const img0 = await decodeImageFromFile(file);
+        const img = downscaleImageToMax(img0, 2048);
+        const finalImg = await new Promise((resolve, reject) => {
+          if (img === img0) return resolve(img0);
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("Downscaled image decode failed"));
+        });
+        const tex = imageToTexture(finalImg, { isData:true });
+        applyMaskTexture(tex);
+        log(`Mask applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
+      } catch (err) {
+        log("Mask failed ❌ " + err.message);
+        alert("Mask failed: " + err.message);
       }
+    });
+
+    document.getElementById("genHeightBtn").addEventListener("click", () => {
+      if (!lastFrontImage) { alert("Upload a front image (or choose a preset) first."); return; }
       log("Generating height from front…");
-
       const c = generateHeightFromImage(lastFrontImage, 1024);
-      const heightTex = canvasToHeightTexture(c);
-
-      if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
-      frontMat.bumpMap = heightTex;
-      frontMat.bumpScale = parseFloat(bumpSlider.value);
-      frontMat.needsUpdate = true;
-
-      frontFilmMat.uniforms.uHeight.value = heightTex;
-
+      const heightTex = canvasToNoColorTexture(c);
+      applyHeightTexture(heightTex);
       log("Generated height applied ✅");
     });
 
-    // Resize + animate
+    document.getElementById("genMaskBtn").addEventListener("click", () => {
+      if (!lastFrontImage) { alert("Upload a front image (or choose a preset) first."); return; }
+      log("Generating foil mask from front…");
+      const c = generateFoilMaskFromImage(lastFrontImage, 1024);
+      const maskTex = canvasToNoColorTexture(c);
+      applyMaskTexture(maskTex);
+      log("Generated foil mask applied ✅");
+    });
+
+    // Reset view
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      controls.target.set(0, 0.05, 0);
+      camera.position.set(0, 0.35, 1.35);
+      cardGroup.rotation.x = -0.08;
+      cardGroup.rotation.y = 0.55;
+      controls.update();
+      log("View reset ✅");
+    });
+
+    // Export PNG (uses preserveDrawingBuffer)
+    document.getElementById("exportBtn").addEventListener("click", () => {
+      // quick render to ensure latest frame
+      renderer.render(scene, camera);
+      const a = document.createElement("a");
+      a.download = "card_view.png";
+      a.href = renderer.domElement.toDataURL("image/png");
+      a.click();
+      log("Exported PNG ✅");
+    });
+
+    // ---------- Presets (edit these to match your repo filenames) ----------
+    // Put files in:
+    //  assets/cards/<id>-front.jpg
+    //  assets/cards/<id>-height.png   (optional)
+    //  assets/cards/<id>-mask.png     (optional)
+    //  assets/cards/<id>-thumb.jpg    (optional)
+    const PRESETS = [
+      { id: "charizard", name: "Charizard (example)", tune: { bump: 0.04, disp: 0.035, holo: 0.65, relief: 1.35, band: 92, sparkle: 0.70 } },
+      { id: "pikachu",   name: "Pikachu (example)",   tune: { bump: 0.03, disp: 0.028, holo: 0.58, relief: 1.10, band: 80, sparkle: 0.55 } },
+      { id: "mewtwo",    name: "Mewtwo (example)",    tune: { bump: 0.05, disp: 0.045, holo: 0.72, relief: 1.60, band: 110, sparkle: 0.80 } }
+    ];
+
+    const presetSelect = document.getElementById("presetSelect");
+    const presetThumbs = document.getElementById("presetThumbs");
+
+    function setSlidersFromTune(t) {
+      if (!t) return;
+      if (typeof t.bump === "number") bumpSlider.value = t.bump.toFixed(3);
+      if (typeof t.disp === "number") dispSlider.value = t.disp.toFixed(3);
+      if (typeof t.holo === "number") holoSlider.value = t.holo.toFixed(2);
+      if (typeof t.relief === "number") holoReliefSlider.value = t.relief.toFixed(2);
+      if (typeof t.band === "number") bandSlider.value = String(Math.round(t.band));
+      if (typeof t.sparkle === "number") sparkleSlider.value = t.sparkle.toFixed(2);
+
+      // apply
+      frontMat.bumpScale = parseFloat(bumpSlider.value);
+      frontMat.displacementScale = parseFloat(dispSlider.value);
+      frontFilmMat.uniforms.uStrength.value = parseFloat(holoSlider.value);
+      frontFilmMat.uniforms.uRelief.value = parseFloat(holoReliefSlider.value);
+      frontFilmMat.uniforms.uBandScale.value = parseFloat(bandSlider.value);
+      frontFilmMat.uniforms.uSparkle.value = parseFloat(sparkleSlider.value);
+      frontMat.needsUpdate = true;
+    }
+
+    function presetPaths(id) {
+      return {
+        front: `./assets/cards/${id}-front.jpg`,
+        height:`./assets/cards/${id}-height.png`,
+        mask: `./assets/cards/${id}-mask.png`,
+        thumb:`./assets/cards/${id}-thumb.jpg`
+      };
+    }
+
+    function loadTexture(path, { isData=false } = {}) {
+      return new Promise((resolve, reject) => {
+        loader.load(path, (t) => {
+          t.anisotropy = 8;
+          t.flipY = true; // adjust per your files if needed
+          t.colorSpace = isData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+          resolve(t);
+        }, undefined, () => reject(new Error(`Failed: ${path}`)));
+      });
+    }
+
+    async function applyPreset(p) {
+      const { front, height, mask } = presetPaths(p.id);
+      log(`Loading preset: ${p.name}…`);
+      document.getElementById("titlePill").textContent = p.name;
+
+      try {
+        setSlidersFromTune(p.tune);
+
+        const frontTex = await loadTexture(front, { isData:false });
+        applyFrontTexture(frontTex);
+
+        // Save decoded image for Generate Height/Mask buttons
+        if (frontTex.image) lastFrontImage = frontTex.image;
+
+        // Height is optional
+        try {
+          const hTex = await loadTexture(height, { isData:true });
+          applyHeightTexture(hTex);
+          log("Preset height loaded ✅");
+        } catch {
+          log("Preset height not found (OK). Use Generate height if needed.");
+          applyHeightTexture(defaultHeight);
+        }
+
+        // Mask is optional
+        try {
+          const mTex = await loadTexture(mask, { isData:true });
+          applyMaskTexture(mTex);
+          log("Preset mask loaded ✅");
+        } catch {
+          applyMaskTexture(defaultMask);
+          log("Preset mask not found (OK).");
+        }
+
+        log(`Preset applied ✅ ${p.name}`);
+      } catch (err) {
+        log("Preset failed ❌ " + err.message);
+      }
+    }
+
+    function buildPresetsUI() {
+      presetSelect.innerHTML = `<option value="">— Choose a card —</option>` + PRESETS
+        .map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+
+      presetThumbs.innerHTML = "";
+      for (const p of PRESETS) {
+        const btn = document.createElement("button");
+        btn.className = "thumbBtn";
+        btn.type = "button";
+        btn.title = p.name;
+
+        const { thumb } = presetPaths(p.id);
+        const img = document.createElement("img");
+        img.alt = p.name;
+        img.src = thumb; // may 404; that's okay (we’ll show fallback)
+        img.onerror = () => { img.remove(); };
+
+        const label = document.createElement("span");
+        label.textContent = p.name;
+
+        btn.appendChild(img);
+        btn.appendChild(label);
+        btn.addEventListener("click", () => {
+          presetSelect.value = p.id;
+          applyPreset(p);
+        });
+
+        presetThumbs.appendChild(btn);
+      }
+
+      presetSelect.addEventListener("change", () => {
+        const id = presetSelect.value;
+        const p = PRESETS.find(x => x.id === id);
+        if (!p) return;
+        applyPreset(p);
+      });
+    }
+
+    buildPresetsUI();
+
+    // ---------- Resize ----------
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
+    // ---------- Animate ----------
     const clock = new THREE.Clock();
     function animate() {
       requestAnimationFrame(animate);
@@ -637,6 +1045,7 @@
     animate();
 
     log("Viewer ready ✅");
+
   </script>
 </body>
 </html>
