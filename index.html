@@ -79,7 +79,6 @@
     .muted{ opacity:.75; }
   </style>
 
-  <!-- Make OrbitControls' `import 'three'` work -->
   <script type="importmap">
     {
       "imports": {
@@ -130,13 +129,13 @@
     <div class="section">
       <h3>Tuning</h3>
       <div class="grid">
-        <label>Emboss Strength</label><input id="emboss" type="range" min="0" max="4" step="0.01" value="2.20" />
-        <label>Holo Intensity</label><input id="holo" type="range" min="0" max="4" step="0.01" value="2.10" />
+        <label>Emboss Strength</label><input id="emboss" type="range" min="0" max="6" step="0.01" value="2.60" />
+        <label>Holo Intensity</label><input id="holo" type="range" min="0" max="4" step="0.01" value="1.70" />
         <label>Holo Band Width</label><input id="band" type="range" min="0.02" max="0.70" step="0.01" value="0.25" />
-        <label>Foil Grain</label><input id="grain" type="range" min="0" max="3" step="0.01" value="1.25" />
-        <label>Corner Radius</label><input id="radius" type="range" min="0.00" max="0.20" step="0.001" value="0.06" />
+        <label>Foil Grain</label><input id="grain" type="range" min="0" max="3" step="0.01" value="1.15" />
+        <label>Corner Radius</label><input id="radius" type="range" min="0.00" max="0.20" step="0.001" value="0.065" />
       </div>
-      <div class="hint small">Corner radius is in UV space; 0.06–0.08 looks like a real Pokémon card corner.</div>
+      <div class="hint small">Try Emboss 2.0–3.5. If it’s subtle, rotate the card under the light.</div>
     </div>
 
     <div class="section">
@@ -157,7 +156,7 @@
   <div id="debug" class="pill">
     <div class="title">
       <span>DEBUG</span>
-      <span class="small muted" id="dbgHint">tap “Toggle Log” to hide</span>
+      <span class="small muted">tap “Toggle Log” to hide</span>
     </div>
     <div id="dbgText"></div>
   </div>
@@ -213,8 +212,8 @@
     controls.maxDistance = 3.0;
     controls.target.set(0, 0.02, 0);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-    const key = new THREE.DirectionalLight(0xffffff, 1.8);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+    const key = new THREE.DirectionalLight(0xffffff, 2.2);
     key.position.set(1.2, 1.3, 1.6);
     scene.add(key);
 
@@ -225,16 +224,13 @@
     const EPS = 0.0008;
 
     // ---------- rounded-rect discard in shader (UV space) ----------
-    // returns 1 inside, 0 outside
     const roundedRectGLSL = `
       float roundedMask(vec2 uv, float r){
-        // uv: 0..1
-        // r: corner radius in UV units
-        vec2 p = uv * 2.0 - 1.0; // -1..1
+        vec2 p = uv * 2.0 - 1.0;
         float rx = r * 2.0;
         vec2 q = abs(p) - (vec2(1.0) - vec2(rx));
         float outside = length(max(q, 0.0)) - rx;
-        return 1.0 - step(0.0, outside); // 1 inside, 0 outside
+        return 1.0 - step(0.0, outside);
       }
     `;
 
@@ -277,8 +273,7 @@
           const gy =
             -1*gray[idx(x-1,y-1)] + -2*gray[idx(x,y-1)] + -1*gray[idx(x+1,y-1)] +
              1*gray[idx(x-1,y+1)] +  2*gray[idx(x,y+1)] +  1*gray[idx(x+1,y+1)];
-          const m = Math.min(255, Math.sqrt(gx*gx + gy*gy));
-          out[idx(x,y)] = m|0;
+          out[idx(x,y)] = Math.min(255, Math.sqrt(gx*gx + gy*gy))|0;
         }
       }
       return out;
@@ -300,7 +295,7 @@
 
       const height = new Uint8ClampedArray(w*h);
       for(let i=0;i<height.length;i++){
-        const v = (0.65*gray[i] + 0.55*edges[i]);
+        const v = (0.70*gray[i] + 0.65*edges[i]);
         height[i] = Math.max(0, Math.min(255, v))|0;
       }
       blur3x3(height,w,h);
@@ -311,10 +306,9 @@
 
       const mask = new Uint8ClampedArray(w*h);
       for(let i=0;i<mask.length;i++){
-        const e = edges[i];
-        let m = (e - mean) * 2.2 + 110;
+        let m = (edges[i] - mean) * 2.4 + 105;
         m = Math.max(0, Math.min(255, m));
-        if(gray[i] > 235) m *= 0.7;
+        if(gray[i] > 235) m *= 0.65;
         mask[i] = m|0;
       }
       blur3x3(mask,w,h); blur3x3(mask,w,h);
@@ -335,12 +329,14 @@
       return { heightCanvas: makeGrayCanvas(height), maskCanvas: makeGrayCanvas(mask) };
     }
 
+    // IMPORTANT: make texture orientation consistent for Safari:
+    // - Use vUv flipped in shader AND flipY=true on textures (matches Three defaults)
     function texFromCanvas(c){
       const t = new THREE.CanvasTexture(c);
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      t.flipY = true;
       t.needsUpdate = true;
-      t.flipY = false; // we keep consistent with shaders / UV
       return t;
     }
 
@@ -348,8 +344,8 @@
       const t = new THREE.Texture(img);
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      t.flipY = true;
       t.needsUpdate = true;
-      t.flipY = false;
       return t;
     }
 
@@ -370,21 +366,25 @@
       uHeight:{ value: null },
       uMask:  { value: null },
 
-      uEmboss: { value: 2.2 },
-      uHolo:   { value: 2.1 },
+      uTexel: { value: new THREE.Vector2(1/1024, 1/1024) },
+
+      uEmboss: { value: 2.6 },
+      uHolo:   { value: 1.7 },
       uBand:   { value: 0.25 },
-      uGrain:  { value: 1.25 },
-      uRadius: { value: 0.06 },
+      uGrain:  { value: 1.15 },
+      uRadius: { value: 0.065 },
 
       uEnableHolo: { value: 1 },
       uEnableHeight:{ value: 1 },
       uEnableMask: { value: 1 },
 
       uTime: { value: 0 },
-      uCamPos: { value: new THREE.Vector3() }
+      uCamPos: { value: new THREE.Vector3() },
+      uLightDir: { value: new THREE.Vector3(0.6, 0.8, 1.0).normalize() },
+      uLightCol: { value: new THREE.Color(1,1,1) }
     };
 
-    // ---------- front shader (texture + holo + height + mask + rounded corners) ----------
+    // ---------- front shader ----------
     const frontMat = new THREE.ShaderMaterial({
       uniforms,
       transparent: true,
@@ -394,7 +394,8 @@
         varying vec3 vWorldPos;
         varying vec3 vNormalW;
         void main(){
-          vUv = uv;
+          // Flip UV vertically so images are right-side-up across Safari/Three combos
+          vUv = vec2(uv.x, 1.0 - uv.y);
           vec4 wp = modelMatrix * vec4(position,1.0);
           vWorldPos = wp.xyz;
           vNormalW = normalize(mat3(modelMatrix) * normal);
@@ -411,6 +412,8 @@
         uniform sampler2D uHeight;
         uniform sampler2D uMask;
 
+        uniform vec2 uTexel;
+
         uniform float uEmboss;
         uniform float uHolo;
         uniform float uBand;
@@ -423,6 +426,8 @@
 
         uniform float uTime;
         uniform vec3 uCamPos;
+        uniform vec3 uLightDir;
+        uniform vec3 uLightCol;
 
         ${roundedRectGLSL}
 
@@ -445,46 +450,56 @@
         }
 
         vec3 normalFromHeight(vec2 uv){
-          float h = texture2D(uHeight, uv).r;
-          float hx = texture2D(uHeight, uv + vec2(1.0/1024.0, 0.0)).r;
-          float hy = texture2D(uHeight, uv + vec2(0.0, 1.0/1024.0)).r;
-          return normalize(vec3(h - hx, h - hy, 0.06));
+          float h  = texture2D(uHeight, uv).r;
+          float hx = texture2D(uHeight, uv + vec2(uTexel.x, 0.0)).r;
+          float hy = texture2D(uHeight, uv + vec2(0.0, uTexel.y)).r;
+          // stronger z makes normals less "flat" -> emboss reads better
+          return normalize(vec3(h - hx, h - hy, 0.04));
         }
 
         void main(){
           float inside = roundedMask(vUv, uRadius);
           if(inside < 0.5) discard;
 
-          vec4 base = texture2D(uFront, vUv);
+          vec3 base = texture2D(uFront, vUv).rgb;
 
+          // Build a perturbed normal
           vec3 nW = normalize(vNormalW);
           if(uEnableHeight > 0.5){
             vec3 nh = normalFromHeight(vUv);
             float ml = microLines(vUv);
             vec3 bump = normalize(vec3(nh.xy * (0.6 + 0.4*ml) * uEmboss, 1.0));
-            nW = normalize(nW + vec3(bump.xy, 0.0) * 0.55);
+            // blend bump into world normal
+            nW = normalize(vec3(bump.xy, 1.0));
           }
 
           vec3 V = normalize(uCamPos - vWorldPos);
-          float NdotV = clamp(dot(nW, V), 0.0, 1.0);
+          vec3 L = normalize(uLightDir);
 
+          float NdotL = max(dot(nW, L), 0.0);
+          float NdotV = max(dot(nW, V), 0.0);
+
+          // classic spec (emboss becomes obvious here)
+          vec3 R = reflect(-L, nW);
+          float spec = pow(max(dot(R, V), 0.0), 60.0);
+
+          // subject protection mask (0..1)
           float protect = 0.0;
           if(uEnableMask > 0.5){
             protect = texture2D(uMask, vUv).r;
           }
 
+          // holo bands + grain (kept wavy like you liked)
           float bands = 0.0;
+          float grain = 0.0;
           if(uEnableHolo > 0.5){
             float ang = atan(V.y, V.x);
             float sweep = (vUv.x*1.15 + vUv.y*0.35) + 0.08*sin(uTime*0.25);
             float b = sin((sweep + ang*0.12) * (6.28318 / max(0.02,uBand)));
             bands = 0.5 + 0.5*b;
-          }
 
-          float g = 0.0;
-          if(uEnableHolo > 0.5){
             float h = hash12(vUv*vec2(1400.0, 900.0) + uTime*0.02);
-            g = (h - 0.5) * 0.25 * uGrain;
+            grain = (h - 0.5) * 0.25 * uGrain;
           }
 
           vec3 holoCol = vec3(
@@ -493,56 +508,82 @@
             0.55 + 0.45*sin(6.28318*(bands + 0.66))
           );
 
-          float holoAmt = uHolo * (1.0 - protect);
           float fres = pow(1.0 - NdotV, 2.0);
+          float holoAmt = uHolo * (1.0 - protect);
 
-          vec3 color = base.rgb;
-          color += holoCol * (0.18*holoAmt) * (0.35 + 0.65*fres);
-          color = mix(color, 1.0 - (1.0-color)*(1.0 - holoCol), 0.10*holoAmt);
-          color += g * (0.35 + 0.65*fres);
+          // Lighting base: slightly darker ambient, stronger directional
+          vec3 lit = base * (0.30 + 0.90*NdotL) * uLightCol;
 
-          float spec = pow(max(0.0, NdotV), 32.0);
-          color += vec3(1.0) * spec * 0.08;
+          // Holo overlay (reduced intensity vs prior so colors stay closer)
+          lit += holoCol * (0.12*holoAmt) * (0.35 + 0.65*fres);
+          lit += grain * (0.25 + 0.75*fres);
 
-          gl_FragColor = vec4(color, 1.0);
+          // Spec highlight (emboss pops here)
+          lit += vec3(1.0) * spec * (0.10 + 0.20*uEnableHeight);
+
+          gl_FragColor = vec4(lit, 1.0);
         }
       `
     });
 
-    // ---------- back shader (just texture + rounded discard) ----------
+    // ---------- back shader (now actually visible) ----------
     const backMat = new THREE.ShaderMaterial({
       uniforms,
       transparent: true,
-      side: THREE.BackSide,
+      // IMPORTANT: use FrontSide because we rotate the back plane 180°
+      side: THREE.FrontSide,
       vertexShader: /* glsl */`
         varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vWorldPos;
         void main(){
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+          vUv = vec2(uv.x, 1.0 - uv.y);
+          vec4 wp = modelMatrix * vec4(position,1.0);
+          vWorldPos = wp.xyz;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * wp;
         }
       `,
       fragmentShader: /* glsl */`
         precision highp float;
         varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vWorldPos;
+
         uniform sampler2D uBack;
         uniform float uRadius;
+
+        uniform vec3 uCamPos;
+        uniform vec3 uLightDir;
+
         ${roundedRectGLSL}
+
         void main(){
           float inside = roundedMask(vUv, uRadius);
           if(inside < 0.5) discard;
-          vec4 c = texture2D(uBack, vUv);
-          gl_FragColor = vec4(c.rgb, 1.0);
+
+          vec3 base = texture2D(uBack, vUv).rgb;
+
+          vec3 n = normalize(vNormalW);
+          vec3 L = normalize(uLightDir);
+          vec3 V = normalize(uCamPos - vWorldPos);
+          float NdotL = max(dot(n, L), 0.0);
+          vec3 R = reflect(-L, n);
+          float spec = pow(max(dot(R, V), 0.0), 40.0);
+
+          vec3 lit = base * (0.35 + 0.85*NdotL) + vec3(1.0)*spec*0.06;
+          gl_FragColor = vec4(lit, 1.0);
         }
       `
     });
 
-    // ---------- edge / thickness (simple box) ----------
+    // ---------- thickness ----------
     const edgeMat = new THREE.MeshStandardMaterial({ color: 0x0e0f13, roughness: 0.85, metalness: 0.05 });
     const edgeGeo = new THREE.BoxGeometry(CARD_W, CARD_H, THICK);
     const edgeMesh = new THREE.Mesh(edgeGeo, edgeMat);
     scene.add(edgeMesh);
 
-    // ---------- front/back planes (UV-correct) ----------
+    // ---------- front/back planes ----------
     const planeGeo = new THREE.PlaneGeometry(CARD_W, CARD_H, 1, 1);
 
     const frontMesh = new THREE.Mesh(planeGeo, frontMat);
@@ -554,7 +595,7 @@
     backMesh.position.z = -THICK/2 - EPS;
     scene.add(backMesh);
 
-    // group transform (rotate whole card)
+    // group transform
     const cardGroup = new THREE.Group();
     cardGroup.add(edgeMesh, frontMesh, backMesh);
     cardGroup.rotation.x = -0.05;
@@ -611,11 +652,11 @@
       UI.fxHolo.checked = true;
       UI.fxHeight.checked = true;
       UI.fxMask.checked = true;
-      UI.emboss.value = "2.20";
-      UI.holo.value = "2.10";
+      UI.emboss.value = "2.60";
+      UI.holo.value = "1.70";
       UI.band.value = "0.25";
-      UI.grain.value = "1.25";
-      UI.radius.value = "0.06";
+      UI.grain.value = "1.15";
+      UI.radius.value = "0.065";
       applyUniformsFromUI();
     }
 
@@ -640,13 +681,16 @@
     let lastGen = { heightCanvas:null, maskCanvas:null };
 
     async function setFrontImage(img, label="front"){
-      const t = texFromImage(img);
-      uniforms.uFront.value = t;
+      uniforms.uFront.value = texFromImage(img);
 
       const gen = generateHeightAndMask(img);
       lastGen = gen;
+
       uniforms.uHeight.value = texFromCanvas(gen.heightCanvas);
       uniforms.uMask.value   = texFromCanvas(gen.maskCanvas);
+
+      // Correct texel size for the height sampler (this is HUGE for emboss)
+      uniforms.uTexel.value.set(1/gen.heightCanvas.width, 1/gen.heightCanvas.height);
 
       log(`✓ Front set (${label}) · auto height/mask generated`, "ok");
     }
@@ -676,6 +720,7 @@
         const img = await fileToImage(UI.heightFile.files[0]);
         const { c } = canvasFromImage(img, 1024);
         uniforms.uHeight.value = texFromCanvas(c);
+        uniforms.uTexel.value.set(1/c.width, 1/c.height);
         setStatus("Ready");
         log("✓ Height uploaded", "ok");
       }catch(e){
@@ -743,6 +788,10 @@
       requestAnimationFrame(animate);
       uniforms.uTime.value = clock.getElapsedTime();
       uniforms.uCamPos.value.copy(camera.position);
+
+      // keep light direction stable in view — you can later make it follow the camera if you want
+      uniforms.uLightDir.value.set(0.65, 0.85, 1.05).normalize();
+
       controls.update();
       renderer.render(scene, camera);
     }
