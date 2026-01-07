@@ -3,28 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3D Card Viewer (iOS-safe Uploads + Height + Holo)</title>
+  <title>3D Card Viewer (Base)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
-
     #ui {
       position: fixed; top: 12px; left: 12px; z-index: 10;
-      background: rgba(0,0,0,.58); color: #fff; padding: 12px 12px; border-radius: 12px;
+      background: rgba(0,0,0,.58); color: #fff; padding: 12px; border-radius: 12px;
       backdrop-filter: blur(8px);
-      display: grid; gap: 10px; min-width: 300px; max-width: min(92vw, 380px);
+      display: grid; gap: 10px; min-width: 280px; max-width: min(92vw, 360px);
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
     #ui label { font-size: 12px; opacity: .95; display: grid; gap: 6px; }
     #ui small { opacity: .75; line-height: 1.25; }
-    #ui .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
-    #ui input[type="range"] { width: 170px; }
-    #ui input[type="file"] { width: 100%; }
-    #ui .pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: rgba(255,255,255,.08); padding: 6px 10px; border-radius: 999px;
-      font-size: 12px; opacity: .9;
-    }
     #status {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
@@ -33,7 +24,7 @@
       border: 1px solid rgba(255,255,255,.08);
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 140px;
+      max-height: 120px;
       overflow: auto;
       line-height: 1.25;
     }
@@ -41,82 +32,51 @@
 </head>
 <body>
   <div id="ui">
-    <div class="pill" id="caps">WebGL: checking…</div>
+    <div id="status">Loading…</div>
 
-    <label>Front image (base color)
+    <label>Front image (PNG/JPG)
       <input id="frontInput" type="file" accept="image/*" />
     </label>
 
-    <label>Back image (base color)
+    <label>Back image (PNG/JPG)
       <input id="backInput" type="file" accept="image/*" />
     </label>
 
-    <label>Height map (grayscale)
-      <input id="heightInput" type="file" accept="image/*" />
-    </label>
-
-    <div class="row">
-      <label style="margin:0;">Max upload size</label>
-      <select id="maxSizeSelect">
-        <option value="1024">1024</option>
-        <option value="2048" selected>2048 (recommended)</option>
-        <option value="4096">4096 (may fail on iOS)</option>
-      </select>
-    </div>
-
-    <div class="row">
-      <label style="margin:0;">Displacement</label>
-      <input id="dispRange" type="range" min="0" max="0.02" step="0.0005" value="0.006" />
-    </div>
-
-    <div class="row">
-      <label style="margin:0;">Holographic</label>
-      <input id="holoToggle" type="checkbox" checked />
-    </div>
-
     <small>
       Drag to rotate • Scroll to zoom • Right-drag to pan<br/>
-      Height map: brighter = higher relief. Large photos will be downscaled.
+      If you’re on iPhone: very large photos are auto-downscaled.
     </small>
-
-    <div id="status">Ready.</div>
   </div>
 
   <script type="module">
-    // More reliable CDN for GitHub Pages + mobile networks:
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-    import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+    // IMPORTANT: self-hosted modules (works reliably on iOS + GitHub Pages)
+    import * as THREE from "./libs/three.module.js";
+    import { OrbitControls } from "./libs/examples/jsm/controls/OrbitControls.js";
 
     const statusEl = document.getElementById("status");
-    const capsEl = document.getElementById("caps");
-    function logStatus(msg) {
-      statusEl.textContent = msg + "\n" + statusEl.textContent;
+    const log = (m) => statusEl.textContent = m + "\n" + statusEl.textContent;
+
+    // ---- Quick WebGL check ----
+    const test = document.createElement("canvas");
+    const gl = test.getContext("webgl") || test.getContext("experimental-webgl");
+    if (!gl) {
+      statusEl.textContent = "WebGL not available in this browser.";
+      throw new Error("WebGL not available");
     }
-    function setCaps(msg) { capsEl.textContent = msg; }
+    log("WebGL: available ✅");
 
-    // -------- Basic WebGL capability hint --------
-    const canvasTest = document.createElement("canvas");
-    const gl = canvasTest.getContext("webgl") || canvasTest.getContext("experimental-webgl");
-    if (!gl) setCaps("WebGL: unavailable (textures won’t work)");
-    else setCaps("WebGL: available");
-
-    // ---------- Renderer ----------
+    // ---------- Renderer / Scene / Camera ----------
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    renderer.physicallyCorrectLights = true;
     document.body.appendChild(renderer.domElement);
 
-    // ---------- Scene / Camera ----------
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(0x0b0f14, 2.5, 10);
 
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
-    camera.position.set(0, 0.32, 1.35);
+    camera.position.set(0, 0.35, 1.35);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -125,32 +85,32 @@
     controls.maxDistance = 3.0;
     controls.target.set(0, 0.05, 0);
 
-    // ---------- Environment reflections (key for holo) ----------
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = envTex;
-
     // ---------- Lights ----------
-    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
-    key.position.set(1.4, 2.0, 1.2);
+    const key = new THREE.DirectionalLight(0xffffff, 1.2);
+    key.position.set(1.5, 2.0, 1.2);
     scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0x9bd5ff, 1.0);
-    rim.position.set(0.0, 1.6, -2.2);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+    fill.position.set(-1.8, 1.2, 1.6);
+    scene.add(fill);
+
+    const rim = new THREE.DirectionalLight(0x9bd5ff, 0.6);
+    rim.position.set(0.0, 1.8, -2.0);
     scene.add(rim);
 
-    // ---------- Card dimensions ----------
+    // ---------- Rounded card geometry (extruded) ----------
     const cardWidth = 0.63;
     const cardHeight = 0.88;
-    const thickness = 0.02;
     const cornerRadius = 0.045;
+    const thickness = 0.02;
 
     function roundedRectShape(w, h, r) {
       const x = -w / 2, y = -h / 2;
       const shape = new THREE.Shape();
-      const rr = Math.min(r, w/2, h/2);
+      const rr = Math.min(r, w / 2, h / 2);
+
       shape.moveTo(x + rr, y);
       shape.lineTo(x + w - rr, y);
       shape.quadraticCurveTo(x + w, y, x + w, y + rr);
@@ -160,11 +120,12 @@
       shape.quadraticCurveTo(x, y + h, x, y + h - rr);
       shape.lineTo(x, y + rr);
       shape.quadraticCurveTo(x, y, x + rr, y);
+
       return shape;
     }
 
-    // Edge geometry (low-ish poly is fine)
-    const edgeGeom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
+    const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+    const geom = new THREE.ExtrudeGeometry(shape, {
       depth: thickness,
       bevelEnabled: true,
       bevelThickness: 0.004,
@@ -172,20 +133,84 @@
       bevelSegments: 3,
       curveSegments: 24
     });
-    edgeGeom.translate(0, 0, -thickness/2);
+    geom.translate(0, 0, -thickness / 2);
+    geom.computeVertexNormals();
 
-    // Face geometry needs subdivisions for displacement
-    // (If you bump max upload size higher, consider lowering these on mobile.)
-    const segX = 220;
-    const segY = 300;
-    const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, segX, segY);
+    // Planar UV for caps so textures display correctly
+    geom.computeBoundingBox();
+    const bb = geom.boundingBox;
+    const size = new THREE.Vector3();
+    bb.getSize(size);
+    const pos = geom.attributes.position;
+    const uv = [];
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      uv.push((x - bb.min.x) / size.x, (y - bb.min.y) / size.y);
+    }
+    geom.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
 
-    // ---------- Texture helpers (iOS-safe) ----------
-    function makeTextureFromImg(img, { isDataMap = false } = {}) {
+    // Rebuild groups so we can assign: edges, front, back
+    geom.clearGroups();
+    const index = geom.index;
+    const normal = geom.attributes.normal;
+
+    const side = [];
+    const front = [];
+    const back = [];
+
+    for (let i = 0; i < index.count; i += 3) {
+      const a = index.getX(i), b = index.getX(i+1), c = index.getX(i+2);
+      const nz = (normal.getZ(a) + normal.getZ(b) + normal.getZ(c)) / 3;
+      if (nz > 0.6) front.push(a,b,c);
+      else if (nz < -0.6) back.push(a,b,c);
+      else side.push(a,b,c);
+    }
+
+    const merged = new Uint32Array(side.length + front.length + back.length);
+    merged.set(side, 0);
+    merged.set(front, side.length);
+    merged.set(back, side.length + front.length);
+
+    geom.setIndex(new THREE.BufferAttribute(merged, 1));
+    geom.addGroup(0, side.length, 0);
+    geom.addGroup(side.length, front.length, 1);
+    geom.addGroup(side.length + front.length, back.length, 2);
+
+    // ---------- Materials ----------
+    const texLoader = new THREE.TextureLoader();
+    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
+    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
+    for (const t of [defaultFront, defaultBack]) {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.flipY = false;
+      t.anisotropy = 8;
+    }
+
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.9, metalness: 0.0 });
+    const frontMat = new THREE.MeshStandardMaterial({ map: defaultFront, roughness: 0.6, metalness: 0.05 });
+    const backMat  = new THREE.MeshStandardMaterial({ map: defaultBack,  roughness: 0.6, metalness: 0.05 });
+
+    const card = new THREE.Mesh(geom, [edgeMat, frontMat, backMat]);
+    card.rotation.x = -0.08;
+    card.rotation.y = 0.55;
+    scene.add(card);
+
+    // Ground (for contrast)
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(6, 6),
+      new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.55;
+    scene.add(ground);
+
+    // ---------- iOS-safe texture upload ----------
+    function makeTextureFromImg(img) {
       const tex = new THREE.Texture(img);
+      tex.colorSpace = THREE.SRGBColorSpace;
       tex.flipY = false;
       tex.anisotropy = 8;
-      tex.colorSpace = isDataMap ? THREE.NoColorSpace : THREE.SRGBColorSpace;
       tex.needsUpdate = true;
       return tex;
     }
@@ -194,7 +219,7 @@
       const w0 = img.naturalWidth || img.width;
       const h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
-      if (!maxSize || largest <= maxSize) return img;
+      if (largest <= maxSize) return img;
 
       const scale = maxSize / largest;
       const w = Math.max(1, Math.round(w0 * scale));
@@ -211,7 +236,6 @@
     }
 
     async function loadImageFromFile(file) {
-      // FileReader path is the most reliable on iOS Safari
       const dataURL = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onerror = () => reject(new Error("FileReader failed"));
@@ -222,196 +246,43 @@
       const img = await new Promise((resolve, reject) => {
         const im = new Image();
         im.onload = () => resolve(im);
-        im.onerror = () => reject(new Error("Image decode failed (format unsupported?)"));
+        im.onerror = () => reject(new Error("Image decode failed"));
         im.src = dataURL;
       });
 
       return img;
     }
 
-    async function loadTextureFromFile(file, { maxSize = 2048, isDataMap = false } = {}) {
+    async function loadTextureFromFile(file, maxSize = 2048) {
       const img = await loadImageFromFile(file);
-
-      logStatus(`Loaded image: ${file.name} (${img.naturalWidth}x${img.naturalHeight})`);
+      log(`Loaded: ${file.name} (${img.naturalWidth}x${img.naturalHeight})`);
 
       const maybeDown = downscaleImageToMax(img, maxSize);
-      const outImg = await new Promise((resolve, reject) => {
+      const finalImg = await new Promise((resolve, reject) => {
         if (maybeDown === img) return resolve(img);
         maybeDown.onload = () => resolve(maybeDown);
         maybeDown.onerror = () => reject(new Error("Downscaled image decode failed"));
       });
 
-      if (outImg !== img) {
-        logStatus(`Downscaled to: ${outImg.naturalWidth}x${outImg.naturalHeight} (max ${maxSize})`);
-      }
-
-      return makeTextureFromImg(outImg, { isDataMap });
+      if (finalImg !== img) log(`Downscaled to: ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
+      return makeTextureFromImg(finalImg);
     }
 
-    // ---------- Materials (Holo physical + shader film) ----------
-    function makeHoloPhysicalMaterial(initialMap) {
-      const mat = new THREE.MeshPhysicalMaterial({
-        map: initialMap,
-        metalness: 0.35,
-        roughness: 0.25,
-        envMapIntensity: 1.25,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.12,
-        iridescence: 1.0,
-        iridescenceIOR: 1.35,
-        iridescenceThicknessRange: [120, 680],
-      });
-
-      // displacement settings updated live
-      mat.displacementScale = parseFloat(document.getElementById("dispRange").value);
-      mat.displacementBias = -mat.displacementScale * 0.35;
-
-      mat.onBeforeCompile = (shader) => {
-        shader.uniforms.uTime = { value: 0 };
-        shader.uniforms.uHolo = { value: 1 };
-        shader.uniforms.uRadius = { value: cornerRadius };
-        shader.uniforms.uSize = { value: new THREE.Vector2(cardWidth, cardHeight) };
-
-        shader.fragmentShader = shader.fragmentShader
-          .replace(
-            "#include <common>",
-            `#include <common>
-             uniform float uTime;
-             uniform float uHolo;
-             uniform float uRadius;
-             uniform vec2 uSize;
-
-             float sdRoundedRect(vec2 p, vec2 b, float r){
-               vec2 q = abs(p) - b + vec2(r);
-               return length(max(q,0.0)) + min(max(q.x,q.y),0.0) - r;
-             }
-             float hash21(vec2 p){
-               p = fract(p*vec2(123.34, 456.21));
-               p += dot(p, p+45.32);
-               return fract(p.x*p.y);
-             }
-            `
-          )
-          .replace(
-            "#include <alphamap_fragment>",
-            `#include <alphamap_fragment>
-             // rounded corner discard
-             vec2 uv = vUv;
-             vec2 p = (uv - 0.5) * uSize;
-             float d = sdRoundedRect(p, 0.5*uSize, uRadius);
-             if (d > 0.0005) discard;
-            `
-          )
-          .replace(
-            "#include <output_fragment>",
-            `#include <output_fragment>
-             if (uHolo > 0.5) {
-               // Fresnel-ish term (stronger at grazing angles)
-               float f = pow(1.0 - saturate(dot(normalize(vNormal), normalize(vViewPosition))), 2.4);
-
-               // Animated prismatic bands (foil feel)
-               float bands = sin((vUv.y*70.0) + (uTime*1.65) + vUv.x*18.0) * 0.5 + 0.5;
-
-               // Slight diagonal streaks
-               float diag = sin((vUv.x*80.0 + vUv.y*55.0) + uTime*0.9) * 0.5 + 0.5;
-
-               // Micro sparkle
-               float sparkle = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2)) * 0.9;
-
-               vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
-               vec3 film = rainbow * (0.12 + 0.75*f) + rainbow * (diag*0.08) + sparkle;
-
-               gl_FragColor.rgb += film * 0.55;
-             }
-            `
-          );
-
-        mat.userData.shader = shader;
-      };
-
-      return mat;
-    }
-
-    // Default textures so you see something even before uploading
-    const texLoader = new THREE.TextureLoader();
-    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
-    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
-    for (const t of [defaultFront, defaultBack]) {
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
-      t.flipY = false;
-    }
-
-    const frontMat = makeHoloPhysicalMaterial(defaultFront);
-    const backMat  = makeHoloPhysicalMaterial(defaultBack);
-
-    const edgeMat = new THREE.MeshStandardMaterial({
-      color: 0x1b222e,
-      metalness: 0.0,
-      roughness: 0.95
-    });
-
-    let heightTex = null;
-    function applyHeightToMats() {
-      frontMat.displacementMap = heightTex;
-      backMat.displacementMap  = heightTex;
-      frontMat.needsUpdate = true;
-      backMat.needsUpdate  = true;
-      logStatus(heightTex ? "Height map applied." : "Height map cleared.");
-    }
-
-    // ---------- Build the card ----------
-    const cardGroup = new THREE.Group();
-    scene.add(cardGroup);
-
-    const edgeMesh = new THREE.Mesh(edgeGeom, edgeMat);
-    cardGroup.add(edgeMesh);
-
-    const frontMesh = new THREE.Mesh(faceGeom, frontMat);
-    frontMesh.position.z = thickness/2 + 0.0008;
-    cardGroup.add(frontMesh);
-
-    const backMesh = new THREE.Mesh(faceGeom, backMat);
-    backMesh.rotation.y = Math.PI;
-    backMesh.position.z = -thickness/2 - 0.0008;
-    cardGroup.add(backMesh);
-
-    cardGroup.rotation.x = -0.08;
-    cardGroup.rotation.y = 0.55;
-
-    // Ground
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(6, 6),
-      new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
-    );
-    ground.rotation.x = -Math.PI/2;
-    ground.position.y = -0.55;
-    scene.add(ground);
-
-    // ---------- UI wiring ----------
     const frontInput = document.getElementById("frontInput");
     const backInput  = document.getElementById("backInput");
-    const heightInput= document.getElementById("heightInput");
-    const dispRange  = document.getElementById("dispRange");
-    const holoToggle = document.getElementById("holoToggle");
-    const maxSizeSel = document.getElementById("maxSizeSelect");
-
-    function currentMaxSize() {
-      return parseInt(maxSizeSel.value, 10);
-    }
 
     frontInput.addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        logStatus(`Front upload started: ${file.name}`);
-        const tex = await loadTextureFromFile(file, { maxSize: currentMaxSize(), isDataMap: false });
+        log(`Front upload: ${file.name}`);
+        const tex = await loadTextureFromFile(file, 2048);
         if (frontMat.map) frontMat.map.dispose();
         frontMat.map = tex;
         frontMat.needsUpdate = true;
-        logStatus("Front texture applied ✅");
+        log("Front applied ✅");
       } catch (err) {
-        logStatus("Front texture failed ❌ " + err.message);
+        log("Front failed ❌ " + err.message);
         alert("Front texture failed: " + err.message);
       }
     });
@@ -420,71 +291,33 @@
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        logStatus(`Back upload started: ${file.name}`);
-        const tex = await loadTextureFromFile(file, { maxSize: currentMaxSize(), isDataMap: false });
+        log(`Back upload: ${file.name}`);
+        const tex = await loadTextureFromFile(file, 2048);
         if (backMat.map) backMat.map.dispose();
         backMat.map = tex;
         backMat.needsUpdate = true;
-        logStatus("Back texture applied ✅");
+        log("Back applied ✅");
       } catch (err) {
-        logStatus("Back texture failed ❌ " + err.message);
+        log("Back failed ❌ " + err.message);
         alert("Back texture failed: " + err.message);
       }
     });
 
-    heightInput.addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      try {
-        logStatus(`Height upload started: ${file.name}`);
-        const tex = await loadTextureFromFile(file, { maxSize: currentMaxSize(), isDataMap: true });
-        if (heightTex) heightTex.dispose();
-        heightTex = tex;
-        applyHeightToMats();
-        logStatus("Height map applied ✅");
-      } catch (err) {
-        logStatus("Height map failed ❌ " + err.message);
-        alert("Height map failed: " + err.message);
-      }
-    });
-
-    dispRange.addEventListener("input", () => {
-      const v = parseFloat(dispRange.value);
-      frontMat.displacementScale = v;
-      backMat.displacementScale  = v;
-      frontMat.displacementBias = -v * 0.35;
-      backMat.displacementBias  = -v * 0.35;
-    });
-
-    holoToggle.addEventListener("change", () => {
-      const on = holoToggle.checked ? 1 : 0;
-      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uHolo.value = on;
-      if (backMat.userData.shader)  backMat.userData.shader.uniforms.uHolo.value = on;
-      logStatus(`Holographic: ${on ? "ON" : "OFF"}`);
-    });
-
-    // ---------- Resize ----------
+    // ---------- Resize + loop ----------
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // ---------- Animate ----------
-    const clock = new THREE.Clock();
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
-
-      const t = clock.getElapsedTime();
-      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uTime.value = t;
-      if (backMat.userData.shader)  backMat.userData.shader.uniforms.uTime.value = t;
-
       renderer.render(scene, camera);
     }
     animate();
 
-    logStatus("Viewer loaded. Upload textures to apply them.");
+    log("Viewer ready. Upload front/back images.");
   </script>
 </body>
 </html>
