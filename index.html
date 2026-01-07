@@ -79,7 +79,7 @@
     .muted{ opacity:.75; }
   </style>
 
-  <!-- ✅ CRITICAL: make OrbitControls' `import 'three'` work on Safari/GitHub Pages -->
+  <!-- Make OrbitControls' `import 'three'` work -->
   <script type="importmap">
     {
       "imports": {
@@ -115,9 +115,7 @@
         <label>Front (upload)</label><input id="frontFile" type="file" accept="image/*" />
         <label>Height (optional)</label><input id="heightFile" type="file" accept="image/*" />
       </div>
-      <div class="hint">
-        If you don’t upload a height map, one is auto-generated from the front image.
-      </div>
+      <div class="hint">If you don’t upload a height map, one is auto-generated from the front image.</div>
     </div>
 
     <div class="section">
@@ -126,10 +124,6 @@
         <div class="chk"><input id="fxHolo" type="checkbox" checked /><label for="fxHolo">Holographic (front)</label></div><span></span>
         <div class="chk"><input id="fxHeight" type="checkbox" checked /><label for="fxHeight">Auto Height + Micro-Emboss</label></div><span></span>
         <div class="chk"><input id="fxMask" type="checkbox" checked /><label for="fxMask">Auto Foil Mask (protect subject)</label></div><span></span>
-      </div>
-      <div class="hint small">
-        “Auto Foil Mask” is a heuristic (no ML): it detects high-detail subject regions and reduces holo there.
-        You can export the mask and tweak it externally if you want perfect control.
       </div>
     </div>
 
@@ -140,11 +134,9 @@
         <label>Holo Intensity</label><input id="holo" type="range" min="0" max="4" step="0.01" value="2.10" />
         <label>Holo Band Width</label><input id="band" type="range" min="0.02" max="0.70" step="0.01" value="0.25" />
         <label>Foil Grain</label><input id="grain" type="range" min="0" max="3" step="0.01" value="1.25" />
-        <label>Border Foil</label><input id="borderFoil" type="range" min="0" max="1" step="0.01" value="1.00" />
+        <label>Corner Radius</label><input id="radius" type="range" min="0.00" max="0.20" step="0.001" value="0.06" />
       </div>
-      <div class="hint small">
-        Border Foil at 1.00 means holo extends all the way to the rounded edge. Lower it if you ever want a “frame”.
-      </div>
+      <div class="hint small">Corner radius is in UV space; 0.06–0.08 looks like a real Pokémon card corner.</div>
     </div>
 
     <div class="section">
@@ -153,9 +145,6 @@
         <button id="exportHeight">Export Height</button>
         <button id="exportMask">Export Foil Mask</button>
         <button id="toggleLog">Toggle Log</button>
-      </div>
-      <div class="hint small">
-        If something fails to load, it will show in the log (no Web Inspector needed).
       </div>
     </div>
 
@@ -174,12 +163,11 @@
   </div>
 
   <script type="module">
-    // ---------- tiny logger ----------
+    // ---------- logger ----------
     const dbgBox  = document.getElementById("debug");
     const dbgText = document.getElementById("dbgText");
     const statusEl = document.getElementById("status");
     const miniStatus = document.getElementById("miniStatus");
-
     const log = (msg, cls="") => {
       const line = document.createElement("div");
       line.textContent = msg;
@@ -193,12 +181,11 @@
     window.addEventListener("error", (e) => log("❌ window.error: " + (e?.message || e), "err"));
     window.addEventListener("unhandledrejection", (e) => log("❌ unhandledrejection: " + (e?.reason?.message || e?.reason || e), "err"));
 
-    // ---------- imports ----------
     import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
     log("✓ Imports OK (three + OrbitControls)", "ok");
 
-    // ---------- constants / paths ----------
+    // ---------- paths ----------
     const PATH_BACK = "./assets/pokemon-back.jpg";
     const PRESETS = {
       ray:   "./assets/presets/mega-rayquaza-front.JPG",
@@ -207,7 +194,7 @@
 
     // ---------- renderer / scene ----------
     const app = document.getElementById("app");
-    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -226,63 +213,32 @@
     controls.maxDistance = 3.0;
     controls.target.set(0, 0.02, 0);
 
-    const amb = new THREE.AmbientLight(0xffffff, 0.35);
-    scene.add(amb);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
     const key = new THREE.DirectionalLight(0xffffff, 1.8);
     key.position.set(1.2, 1.3, 1.6);
     scene.add(key);
 
-    // ---------- rounded card geometry ----------
-    function roundedRectShape(w, h, r){
-      const x = -w/2, y = -h/2;
-      const s = new THREE.Shape();
-      s.moveTo(x+r, y);
-      s.lineTo(x+w-r, y);
-      s.quadraticCurveTo(x+w, y, x+w, y+r);
-      s.lineTo(x+w, y+h-r);
-      s.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
-      s.lineTo(x+r, y+h);
-      s.quadraticCurveTo(x, y+h, x, y+h-r);
-      s.lineTo(x, y+r);
-      s.quadraticCurveTo(x, y, x+r, y);
-      return s;
-    }
-
-    // card proportions ~ 63x88 mm
+    // ---------- card dimensions ----------
     const CARD_W = 1.0;
     const CARD_H = CARD_W * (88/63);
-    const CARD_R = 0.06;        // corner radius
-    const CARD_THICK = 0.012;   // thickness
+    const THICK = 0.015;
+    const EPS = 0.0008;
 
-    function makeRoundedCardMesh(){
-      const shape = roundedRectShape(CARD_W, CARD_H, CARD_R);
-      const geo = new THREE.ExtrudeGeometry(shape, {
-        depth: CARD_THICK,
-        bevelEnabled: true,
-        bevelThickness: 0.004,
-        bevelSize: 0.003,
-        bevelSegments: 4,
-        curveSegments: 24
-      });
-      // center it
-      geo.translate(0, 0, -CARD_THICK/2);
-      geo.computeVertexNormals();
-      return geo;
-    }
+    // ---------- rounded-rect discard in shader (UV space) ----------
+    // returns 1 inside, 0 outside
+    const roundedRectGLSL = `
+      float roundedMask(vec2 uv, float r){
+        // uv: 0..1
+        // r: corner radius in UV units
+        vec2 p = uv * 2.0 - 1.0; // -1..1
+        float rx = r * 2.0;
+        vec2 q = abs(p) - (vec2(1.0) - vec2(rx));
+        float outside = length(max(q, 0.0)) - rx;
+        return 1.0 - step(0.0, outside); // 1 inside, 0 outside
+      }
+    `;
 
-    const cardGeo = makeRoundedCardMesh();
-
-    // ---------- utility: load images ----------
-    function loadImage(url){
-      return new Promise((resolve,reject)=>{
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = ()=>resolve(img);
-        img.onerror = ()=>reject(new Error("Image failed: " + url));
-        img.src = url;
-      });
-    }
-
+    // ---------- height/mask generation ----------
     function canvasFromImage(img, maxDim=1024){
       const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
       const w = Math.max(2, Math.floor(img.width * scale));
@@ -294,9 +250,7 @@
       return { c, ctx, w, h };
     }
 
-    // ---------- height + mask generation (heuristics, fast, local) ----------
-    function blurPass(data, w, h){
-      // cheap 3x3 blur on single channel data in-place (Uint8ClampedArray)
+    function blur3x3(data, w, h){
       const out = new Uint8ClampedArray(data.length);
       const idx = (x,y)=>y*w+x;
       for(let y=1;y<h-1;y++){
@@ -331,9 +285,7 @@
     }
 
     function generateHeightAndMask(frontImg){
-      // height: base from luminance + edge emphasis
-      // mask: detect “subject” as high-detail (edges) and reduce holo there
-      const { c, ctx, w, h } = canvasFromImage(frontImg, 1024);
+      const { ctx, w, h } = canvasFromImage(frontImg, 1024);
       const img = ctx.getImageData(0,0,w,h);
       const px = img.data;
 
@@ -343,65 +295,44 @@
         gray[i] = (0.2126*r + 0.7152*g + 0.0722*b)|0;
       }
 
-      // edges
       const edges = sobelMag(gray,w,h);
+      blur3x3(edges,w,h); blur3x3(edges,w,h);
 
-      // smooth edges a bit
-      blurPass(edges,w,h);
-      blurPass(edges,w,h);
-
-      // height combine
       const height = new Uint8ClampedArray(w*h);
       for(let i=0;i<height.length;i++){
-        // base relief + edges
         const v = (0.65*gray[i] + 0.55*edges[i]);
         height[i] = Math.max(0, Math.min(255, v))|0;
       }
-      blurPass(height,w,h);
+      blur3x3(height,w,h);
 
-      // mask (subject protect): high edge density -> higher mask value (protect more)
-      // We invert later in shader (mask=1 means reduce holo).
-      const mask = new Uint8ClampedArray(w*h);
-      // compute local threshold
       let mean=0;
       for(let i=0;i<edges.length;i++) mean += edges[i];
       mean /= edges.length;
 
+      const mask = new Uint8ClampedArray(w*h);
       for(let i=0;i<mask.length;i++){
         const e = edges[i];
-        // aggressive subject selection: edges above mean
         let m = (e - mean) * 2.2 + 110;
         m = Math.max(0, Math.min(255, m));
-        // also treat very bright spec highlights as likely background (slightly lower protect)
         if(gray[i] > 235) m *= 0.7;
         mask[i] = m|0;
       }
-      // blur + expand
-      blurPass(mask,w,h); blurPass(mask,w,h);
+      blur3x3(mask,w,h); blur3x3(mask,w,h);
 
-      // micro-emboss lines (non-tiling-ish): rotate + warp via simple hash noise in shader; here we just provide height.
-      // Return canvases
-      const hC = document.createElement("canvas");
-      hC.width=w; hC.height=h;
-      const hCtx = hC.getContext("2d");
-      const hImg = hCtx.createImageData(w,h);
-      for(let i=0, p=0;i<height.length;i++,p+=4){
-        const v=height[i];
-        hImg.data[p]=v; hImg.data[p+1]=v; hImg.data[p+2]=v; hImg.data[p+3]=255;
-      }
-      hCtx.putImageData(hImg,0,0);
+      const makeGrayCanvas = (arr) => {
+        const c = document.createElement("canvas");
+        c.width=w; c.height=h;
+        const cctx = c.getContext("2d");
+        const im = cctx.createImageData(w,h);
+        for(let i=0, p=0;i<arr.length;i++,p+=4){
+          const v=arr[i];
+          im.data[p]=v; im.data[p+1]=v; im.data[p+2]=v; im.data[p+3]=255;
+        }
+        cctx.putImageData(im,0,0);
+        return c;
+      };
 
-      const mC = document.createElement("canvas");
-      mC.width=w; mC.height=h;
-      const mCtx = mC.getContext("2d");
-      const mImg = mCtx.createImageData(w,h);
-      for(let i=0, p=0;i<mask.length;i++,p+=4){
-        const v=mask[i];
-        mImg.data[p]=v; mImg.data[p+1]=v; mImg.data[p+2]=v; mImg.data[p+3]=255;
-      }
-      mCtx.putImageData(mImg,0,0);
-
-      return { heightCanvas:hC, maskCanvas:mC };
+      return { heightCanvas: makeGrayCanvas(height), maskCanvas: makeGrayCanvas(mask) };
     }
 
     function texFromCanvas(c){
@@ -409,7 +340,7 @@
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
       t.needsUpdate = true;
-      // NOTE: CanvasTexture default flipY = false in three
+      t.flipY = false; // we keep consistent with shaders / UV
       return t;
     }
 
@@ -418,12 +349,21 @@
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
       t.needsUpdate = true;
-      // IMPORTANT: keep orientation correct (not upside-down)
       t.flipY = false;
       return t;
     }
 
-    // ---------- shader material (front) ----------
+    function loadImage(url){
+      return new Promise((resolve,reject)=>{
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = ()=>resolve(img);
+        img.onerror = ()=>reject(new Error("Image failed: " + url));
+        img.src = url;
+      });
+    }
+
+    // ---------- shared uniforms ----------
     const uniforms = {
       uFront: { value: null },
       uBack:  { value: null },
@@ -434,7 +374,7 @@
       uHolo:   { value: 2.1 },
       uBand:   { value: 0.25 },
       uGrain:  { value: 1.25 },
-      uBorderFoil: { value: 1.0 },
+      uRadius: { value: 0.06 },
 
       uEnableHolo: { value: 1 },
       uEnableHeight:{ value: 1 },
@@ -444,9 +384,10 @@
       uCamPos: { value: new THREE.Vector3() }
     };
 
+    // ---------- front shader (texture + holo + height + mask + rounded corners) ----------
     const frontMat = new THREE.ShaderMaterial({
       uniforms,
-      transparent: false,
+      transparent: true,
       side: THREE.FrontSide,
       vertexShader: /* glsl */`
         varying vec2 vUv;
@@ -474,7 +415,7 @@
         uniform float uHolo;
         uniform float uBand;
         uniform float uGrain;
-        uniform float uBorderFoil;
+        uniform float uRadius;
 
         uniform float uEnableHolo;
         uniform float uEnableHeight;
@@ -483,69 +424,55 @@
         uniform float uTime;
         uniform vec3 uCamPos;
 
-        // cheap hash
+        ${roundedRectGLSL}
+
         float hash12(vec2 p){
           vec3 p3  = fract(vec3(p.xyx) * .1031);
           p3 += dot(p3, p3.yzx + 33.33);
           return fract((p3.x + p3.y) * p3.z);
         }
 
-        // micro-emboss lines that follow image but avoid obvious tiling
         float microLines(vec2 uv){
           float a = 1.25 + 0.25*sin(uTime*0.15);
           mat2 R = mat2(cos(a),-sin(a),sin(a),cos(a));
           vec2 p = (uv - 0.5);
           p = R * p;
-          // warp
           float n = hash12(uv*37.0 + uTime*0.03);
           p += (n-0.5) * 0.02;
-          float f = 900.0; // line frequency
+          float f = 900.0;
           float s = sin((p.y)*f);
           return 0.5 + 0.5*s;
         }
 
-        // compute pseudo-normal from height map (screen-space sampling)
         vec3 normalFromHeight(vec2 uv){
           float h = texture2D(uHeight, uv).r;
           float hx = texture2D(uHeight, uv + vec2(1.0/1024.0, 0.0)).r;
           float hy = texture2D(uHeight, uv + vec2(0.0, 1.0/1024.0)).r;
-          vec3 n = normalize(vec3(h - hx, h - hy, 0.06));
-          return n;
+          return normalize(vec3(h - hx, h - hy, 0.06));
         }
 
         void main(){
+          float inside = roundedMask(vUv, uRadius);
+          if(inside < 0.5) discard;
+
           vec4 base = texture2D(uFront, vUv);
 
-          // Height & micro-emboss
           vec3 nW = normalize(vNormalW);
-          if(uEnableHeight > 0.5 && uHeight != sampler2D(0)){
+          if(uEnableHeight > 0.5){
             vec3 nh = normalFromHeight(vUv);
             float ml = microLines(vUv);
-            // combine: image-guided relief + lines
             vec3 bump = normalize(vec3(nh.xy * (0.6 + 0.4*ml) * uEmboss, 1.0));
-            // rotate bump into world-ish by blending with world normal
             nW = normalize(nW + vec3(bump.xy, 0.0) * 0.55);
           }
 
-          // Lighting
           vec3 V = normalize(uCamPos - vWorldPos);
           float NdotV = clamp(dot(nW, V), 0.0, 1.0);
 
-          // Foil mask (protect subject)
           float protect = 0.0;
           if(uEnableMask > 0.5){
-            protect = texture2D(uMask, vUv).r; // 0..1
+            protect = texture2D(uMask, vUv).r;
           }
 
-          // Border Foil: fade foil near edges if desired
-          float border = 1.0;
-          if(uBorderFoil < 0.999){
-            float m = min(min(vUv.x, 1.0-vUv.x), min(vUv.y, 1.0-vUv.y));
-            border = smoothstep(0.02, 0.12, m); // 0 near edges
-            border = mix(border, 1.0, uBorderFoil); // uBorderFoil=1 => always 1
-          }
-
-          // Holo bands (wide + view dependent)
           float bands = 0.0;
           if(uEnableHolo > 0.5){
             float ang = atan(V.y, V.x);
@@ -554,36 +481,26 @@
             bands = 0.5 + 0.5*b;
           }
 
-          // Grain
           float g = 0.0;
           if(uEnableHolo > 0.5){
             float h = hash12(vUv*vec2(1400.0, 900.0) + uTime*0.02);
             g = (h - 0.5) * 0.25 * uGrain;
           }
 
-          // Spectral-ish color
           vec3 holoCol = vec3(
             0.55 + 0.45*sin(6.28318*(bands + 0.00)),
             0.55 + 0.45*sin(6.28318*(bands + 0.33)),
             0.55 + 0.45*sin(6.28318*(bands + 0.66))
           );
 
-          // Reduce holo where subject is protected
-          float holoAmt = uHolo * border * (1.0 - protect);
-
-          // Fresnel-ish boost for realism
+          float holoAmt = uHolo * (1.0 - protect);
           float fres = pow(1.0 - NdotV, 2.0);
 
           vec3 color = base.rgb;
-
-          // Apply holo as additive + slight screen blend
           color += holoCol * (0.18*holoAmt) * (0.35 + 0.65*fres);
           color = mix(color, 1.0 - (1.0-color)*(1.0 - holoCol), 0.10*holoAmt);
-
-          // Grain modulation
           color += g * (0.35 + 0.65*fres);
 
-          // subtle spec highlight
           float spec = pow(max(0.0, NdotV), 32.0);
           color += vec3(1.0) * spec * 0.08;
 
@@ -592,27 +509,58 @@
       `
     });
 
-    // ---------- back material ----------
-    const backMat = new THREE.MeshStandardMaterial({
-      map: null,
-      roughness: 0.55,
-      metalness: 0.10
+    // ---------- back shader (just texture + rounded discard) ----------
+    const backMat = new THREE.ShaderMaterial({
+      uniforms,
+      transparent: true,
+      side: THREE.BackSide,
+      vertexShader: /* glsl */`
+        varying vec2 vUv;
+        void main(){
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        varying vec2 vUv;
+        uniform sampler2D uBack;
+        uniform float uRadius;
+        ${roundedRectGLSL}
+        void main(){
+          float inside = roundedMask(vUv, uRadius);
+          if(inside < 0.5) discard;
+          vec4 c = texture2D(uBack, vUv);
+          gl_FragColor = vec4(c.rgb, 1.0);
+        }
+      `
     });
 
-    // sides
-    const sideMat = new THREE.MeshStandardMaterial({
-      color: 0x0e0f13,
-      roughness: 0.85,
-      metalness: 0.05
-    });
+    // ---------- edge / thickness (simple box) ----------
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x0e0f13, roughness: 0.85, metalness: 0.05 });
+    const edgeGeo = new THREE.BoxGeometry(CARD_W, CARD_H, THICK);
+    const edgeMesh = new THREE.Mesh(edgeGeo, edgeMat);
+    scene.add(edgeMesh);
 
-    // ExtrudeGeometry creates multiple groups: (0=front, 1=sides, 2=back) typical.
-    // We'll assign [front, side, back]
-    const cardMesh = new THREE.Mesh(cardGeo, [frontMat, sideMat, backMat]);
-    cardMesh.rotation.x = -0.05;
-    scene.add(cardMesh);
+    // ---------- front/back planes (UV-correct) ----------
+    const planeGeo = new THREE.PlaneGeometry(CARD_W, CARD_H, 1, 1);
 
-    // ---------- UI hooks ----------
+    const frontMesh = new THREE.Mesh(planeGeo, frontMat);
+    frontMesh.position.z = THICK/2 + EPS;
+    scene.add(frontMesh);
+
+    const backMesh = new THREE.Mesh(planeGeo, backMat);
+    backMesh.rotation.y = Math.PI;
+    backMesh.position.z = -THICK/2 - EPS;
+    scene.add(backMesh);
+
+    // group transform (rotate whole card)
+    const cardGroup = new THREE.Group();
+    cardGroup.add(edgeMesh, frontMesh, backMesh);
+    cardGroup.rotation.x = -0.05;
+    scene.add(cardGroup);
+
+    // ---------- UI ----------
     const UI = {
       preset: document.getElementById("preset"),
       reload: document.getElementById("reload"),
@@ -627,7 +575,7 @@
       holo: document.getElementById("holo"),
       band: document.getElementById("band"),
       grain: document.getElementById("grain"),
-      borderFoil: document.getElementById("borderFoil"),
+      radius: document.getElementById("radius"),
       exportHeight: document.getElementById("exportHeight"),
       exportMask: document.getElementById("exportMask"),
       toggleLog: document.getElementById("toggleLog"),
@@ -643,6 +591,22 @@
       controls.update();
     };
 
+    function applyUniformsFromUI(){
+      uniforms.uEmboss.value = parseFloat(UI.emboss.value);
+      uniforms.uHolo.value = parseFloat(UI.holo.value);
+      uniforms.uBand.value = parseFloat(UI.band.value);
+      uniforms.uGrain.value = parseFloat(UI.grain.value);
+      uniforms.uRadius.value = parseFloat(UI.radius.value);
+
+      uniforms.uEnableHolo.value = UI.fxHolo.checked ? 1 : 0;
+      uniforms.uEnableHeight.value = UI.fxHeight.checked ? 1 : 0;
+      uniforms.uEnableMask.value = UI.fxMask.checked ? 1 : 0;
+    }
+    for(const el of [UI.fxHolo,UI.fxHeight,UI.fxMask,UI.emboss,UI.holo,UI.band,UI.grain,UI.radius]){
+      el.addEventListener("input", applyUniformsFromUI);
+      el.addEventListener("change", applyUniformsFromUI);
+    }
+
     function resetUI(){
       UI.fxHolo.checked = true;
       UI.fxHeight.checked = true;
@@ -651,7 +615,7 @@
       UI.holo.value = "2.10";
       UI.band.value = "0.25";
       UI.grain.value = "1.25";
-      UI.borderFoil.value = "1.00";
+      UI.radius.value = "0.06";
       applyUniformsFromUI();
     }
 
@@ -662,24 +626,7 @@
       log("✓ Reset done", "ok");
     };
 
-    function applyUniformsFromUI(){
-      uniforms.uEmboss.value = parseFloat(UI.emboss.value);
-      uniforms.uHolo.value = parseFloat(UI.holo.value);
-      uniforms.uBand.value = parseFloat(UI.band.value);
-      uniforms.uGrain.value = parseFloat(UI.grain.value);
-      uniforms.uBorderFoil.value = parseFloat(UI.borderFoil.value);
-
-      uniforms.uEnableHolo.value = UI.fxHolo.checked ? 1 : 0;
-      uniforms.uEnableHeight.value = UI.fxHeight.checked ? 1 : 0;
-      uniforms.uEnableMask.value = UI.fxMask.checked ? 1 : 0;
-    }
-
-    for(const el of [UI.fxHolo,UI.fxHeight,UI.fxMask,UI.emboss,UI.holo,UI.band,UI.grain,UI.borderFoil]){
-      el.addEventListener("input", applyUniformsFromUI);
-      el.addEventListener("change", applyUniformsFromUI);
-    }
-
-    // ---------- file loader helpers ----------
+    // ---------- uploads ----------
     function fileToImage(file){
       return new Promise((resolve,reject)=>{
         const url = URL.createObjectURL(file);
@@ -688,6 +635,25 @@
         img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error("Failed to read file: " + file.name)); };
         img.src = url;
       });
+    }
+
+    let lastGen = { heightCanvas:null, maskCanvas:null };
+
+    async function setFrontImage(img, label="front"){
+      const t = texFromImage(img);
+      uniforms.uFront.value = t;
+
+      const gen = generateHeightAndMask(img);
+      lastGen = gen;
+      uniforms.uHeight.value = texFromCanvas(gen.heightCanvas);
+      uniforms.uMask.value   = texFromCanvas(gen.maskCanvas);
+
+      log(`✓ Front set (${label}) · auto height/mask generated`, "ok");
+    }
+
+    async function setBackImage(img){
+      uniforms.uBack.value = texFromImage(img);
+      log("✓ Back set", "ok");
     }
 
     UI.frontFile.onchange = async () => {
@@ -708,10 +674,8 @@
       try{
         setStatus("Loading height upload…");
         const img = await fileToImage(UI.heightFile.files[0]);
-        // convert to canvas texture
         const { c } = canvasFromImage(img, 1024);
-        const t = texFromCanvas(c);
-        uniforms.uHeight.value = t;
+        uniforms.uHeight.value = texFromCanvas(c);
         setStatus("Ready");
         log("✓ Height uploaded", "ok");
       }catch(e){
@@ -720,33 +684,6 @@
       }
     };
 
-    // ---------- set textures ----------
-    let lastGen = { heightCanvas:null, maskCanvas:null };
-
-    async function setFrontImage(img, label="front"){
-      const t = texFromImage(img);
-      // Important: with flipY=false we want UVs that match image orientation.
-      t.needsUpdate = true;
-
-      uniforms.uFront.value = t;
-
-      // auto generate height/mask if no uploaded height
-      const gen = generateHeightAndMask(img);
-      lastGen = gen;
-      uniforms.uHeight.value = texFromCanvas(gen.heightCanvas);
-      uniforms.uMask.value   = texFromCanvas(gen.maskCanvas);
-
-      log(`✓ Front set (${label}) · auto height/mask generated`, "ok");
-    }
-
-    async function setBackImage(img){
-      const t = texFromImage(img);
-      t.needsUpdate = true;
-      backMat.map = t;
-      backMat.needsUpdate = true;
-      log("✓ Back set", "ok");
-    }
-
     // ---------- preset loading ----------
     async function loadPreset(which){
       dbgText.textContent = "";
@@ -754,22 +691,16 @@
       applyUniformsFromUI();
       try{
         setStatus("Loading images…");
-
         const [frontImg, backImg] = await Promise.all([
           loadImage(PRESETS[which]),
           loadImage(PATH_BACK)
         ]);
-
         log("✓ Loaded: " + PRESETS[which], "ok");
         log("✓ Loaded: " + PATH_BACK, "ok");
 
         await setFrontImage(frontImg, which);
         await setBackImage(backImg);
 
-        // Ensure card faces the camera with correct orientation (fix upside-down)
-        // We used flipY=false; ensure UV orientation matches.
-        // If your art ever appears flipped, swap these:
-        // cardMesh.rotation.z = Math.PI; // (not needed here)
         setStatus("Ready");
       }catch(e){
         log("❌ " + e.message, "err");
@@ -780,7 +711,7 @@
     UI.reload.onclick = () => loadPreset(UI.preset.value);
     UI.preset.onchange = UI.reload.onclick;
 
-    // ---------- exports ----------
+    // ---------- export ----------
     function downloadCanvasPNG(c, filename){
       c.toBlob((blob)=>{
         const a = document.createElement("a");
@@ -806,12 +737,11 @@
       log("✓ Exported foil-mask.png", "ok");
     };
 
-    // ---------- animation loop ----------
+    // ---------- loop ----------
     const clock = new THREE.Clock();
     function animate(){
       requestAnimationFrame(animate);
-      const t = clock.getElapsedTime();
-      uniforms.uTime.value = t;
+      uniforms.uTime.value = clock.getElapsedTime();
       uniforms.uCamPos.value.copy(camera.position);
       controls.update();
       renderer.render(scene, camera);
