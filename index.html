@@ -190,12 +190,20 @@
 
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.NoColorSpace;
+
+      // ✅ crisp cutout (removes “faint border” / filtering halo)
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
       tex.needsUpdate = true;
+
       return tex;
     }
 
     const alphaMap = makeRoundedAlphaMap(512);
+
+    // Face geometry: slightly inset so it never overhangs the edge/bevel
     const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, 1, 1);
+    faceGeom.scale(0.992, 0.992, 1); // ✅ removes “floating border” around edges
 
     // Textures
     const loader = new THREE.TextureLoader();
@@ -219,10 +227,12 @@
     defaultFront.anisotropy = 8;
 
     // Face materials
+    // ✅ Use alphaTest instead of transparent to prevent semi-transparent fringes
     const frontMat = new THREE.MeshStandardMaterial({
       map: defaultFront,
       alphaMap,
-      transparent: true,
+      transparent: false,
+      alphaTest: 0.5,
       roughness: 0.55,
       metalness: 0.05
     });
@@ -230,7 +240,8 @@
     const backMat = new THREE.MeshStandardMaterial({
       map: permanentBack,
       alphaMap,
-      transparent: true,
+      transparent: false,
+      alphaTest: 0.5,
       roughness: 0.65,
       metalness: 0.02
     });
@@ -323,8 +334,14 @@
     }
 
     const frontFilmMat = makeHoloFilmMaterial(alphaMap);
+
+    // ✅ keep film “glued” to the surface without a visible offset rim
+    frontFilmMat.polygonOffset = true;
+    frontFilmMat.polygonOffsetFactor = -1;
+    frontFilmMat.polygonOffsetUnits = -1;
+
     const frontFilm = new THREE.Mesh(faceGeom, frontFilmMat);
-    frontFilm.position.z = thickness/2 + 0.0024; // slightly above the front image
+    frontFilm.position.z = thickness/2 + 0.0016; // ✅ closer than before to avoid edge artifacts
     cardGroup.add(frontFilm);
 
     // ---- iOS-safe upload loader (front only) ----
@@ -369,16 +386,13 @@
 
       const tex = new THREE.Texture(finalImg);
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.flipY = false;
+
+      // ✅ FIX: uploads upside down -> flipY true for uploaded textures
+      tex.flipY = true;
+
       tex.anisotropy = 8;
-
-      // ✅ Fix upside-down uploads (apply UV flip via repeat/offset)
-      tex.wrapS = THREE.ClampToEdgeWrapping;
-      tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.repeat.set(1, -1);
-      tex.offset.set(0, 1);
-
       tex.needsUpdate = true;
+
       log(`Front decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight} ✅`);
       return tex;
     }
