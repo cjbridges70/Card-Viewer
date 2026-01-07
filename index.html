@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Base - Stable)</title>
+  <title>Card Viewer (Base - Textures Working)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -24,12 +24,13 @@
       border: 1px solid rgba(255,255,255,.08);
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 170px;
+      max-height: 190px;
       overflow: auto;
       line-height: 1.25;
     }
   </style>
 
+  <!-- Import map so OrbitControls can import "three" -->
   <script type="importmap">
     {
       "imports": {
@@ -93,9 +94,9 @@
     controls.target.set(0, 0.05, 0);
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(1.5, 2.0, 1.2); scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(1.5, 2.0, 1.2); scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
     const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
     // Card dimensions
@@ -104,45 +105,69 @@
     const thickness = 0.02;
     const cornerRadius = 0.045;
 
-    // Rounded rectangle shape (for extrude)
+    // Rounded rectangle shape
     function roundedRectShape(w, h, r) {
-      const x = -w / 2, y = -h / 2;
-      const shape = new THREE.Shape();
+      const x = -w/2, y = -h/2;
+      const s = new THREE.Shape();
       const rr = Math.min(r, w/2, h/2);
-      shape.moveTo(x + rr, y);
-      shape.lineTo(x + w - rr, y);
-      shape.quadraticCurveTo(x + w, y, x + w, y + rr);
-      shape.lineTo(x + w, y + h - rr);
-      shape.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-      shape.lineTo(x + rr, y + h);
-      shape.quadraticCurveTo(x, y + h, x, y + h - rr);
-      shape.lineTo(x, y + rr);
-      shape.quadraticCurveTo(x, y, x + rr, y);
-      return shape;
+      s.moveTo(x + rr, y);
+      s.lineTo(x + w - rr, y); s.quadraticCurveTo(x + w, y, x + w, y + rr);
+      s.lineTo(x + w, y + h - rr); s.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+      s.lineTo(x + rr, y + h); s.quadraticCurveTo(x, y + h, x, y + h - rr);
+      s.lineTo(x, y + rr); s.quadraticCurveTo(x, y, x + rr, y);
+      return s;
     }
 
-    // 1) Edge/thickness mesh (extruded)
-    const edgeGeom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
-      depth: thickness,
-      bevelEnabled: true,
-      bevelThickness: 0.004,
-      bevelSize: 0.004,
-      bevelSegments: 3,
-      curveSegments: 24
-    });
-    edgeGeom.translate(0, 0, -thickness/2);
+    // Build an extrude, then REMOVE cap triangles so it doesn't cover the textures
+    function extrudeSidesOnly(shape) {
+      const full = new THREE.ExtrudeGeometry(shape, {
+        depth: thickness,
+        bevelEnabled: true,
+        bevelThickness: 0.004,
+        bevelSize: 0.004,
+        bevelSegments: 3,
+        curveSegments: 24
+      });
+      full.translate(0, 0, -thickness/2);
+      full.computeVertexNormals();
+
+      // Work with non-indexed triangles for easy filtering
+      const g = full.toNonIndexed();
+      const pos = g.attributes.position;
+      const nor = g.attributes.normal;
+
+      const keptPositions = [];
+      const keptNormals = [];
+
+      // Each triangle is 3 vertices in sequence
+      for (let i = 0; i < pos.count; i += 3) {
+        const nz = (nor.getZ(i) + nor.getZ(i+1) + nor.getZ(i+2)) / 3;
+
+        // Cap faces have normals roughly +/-Z. Keep everything else (sides + bevel).
+        if (Math.abs(nz) > 0.6) continue;
+
+        for (let k = 0; k < 3; k++) {
+          keptPositions.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
+          keptNormals.push(nor.getX(i+k), nor.getY(i+k), nor.getZ(i+k));
+        }
+      }
+
+      const out = new THREE.BufferGeometry();
+      out.setAttribute("position", new THREE.Float32BufferAttribute(keptPositions, 3));
+      out.setAttribute("normal", new THREE.Float32BufferAttribute(keptNormals, 3));
+      return out;
+    }
+
+    const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+    const sideGeom = extrudeSidesOnly(shape);
 
     const edgeMat = new THREE.MeshStandardMaterial({
       color: 0x1b222e,
-      roughness: 0.9,
+      roughness: 0.92,
       metalness: 0.0
     });
 
-    const cardGroup = new THREE.Group();
-    scene.add(cardGroup);
-    cardGroup.add(new THREE.Mesh(edgeGeom, edgeMat));
-
-    // 2) Create a rounded-corner alpha mask for the face planes
+    // Rounded alpha mask for face planes
     function makeRoundedAlphaMap(size = 512) {
       const c = document.createElement("canvas");
       c.width = size; c.height = size;
@@ -152,6 +177,7 @@
       ctx.fillStyle = "black";
       ctx.fillRect(0, 0, size, size);
 
+      // Convert corner radius into pixels (approx)
       const r = Math.round((cornerRadius / Math.min(cardWidth, cardHeight)) * (size * 0.5));
       const inset = 8;
 
@@ -174,19 +200,17 @@
       ctx.fill();
 
       const tex = new THREE.CanvasTexture(c);
-      tex.colorSpace = THREE.NoColorSpace; // alpha is data
+      tex.colorSpace = THREE.NoColorSpace;
       tex.needsUpdate = true;
       return tex;
     }
 
     const alphaMap = makeRoundedAlphaMap(512);
-
-    // 3) Front/Back planes (textured), slightly offset to avoid z-fighting
     const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, 1, 1);
 
     const texLoader = new THREE.TextureLoader();
-    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
-    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
+    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg", () => log("Default front loaded ✅"));
+    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg", () => log("Default back loaded ✅"));
     for (const t of [defaultFront, defaultBack]) {
       t.colorSpace = THREE.SRGBColorSpace;
       t.flipY = false;
@@ -200,7 +224,6 @@
       roughness: 0.6,
       metalness: 0.05
     });
-
     const backMat = new THREE.MeshStandardMaterial({
       map: defaultBack,
       alphaMap,
@@ -209,16 +232,22 @@
       metalness: 0.05
     });
 
+    // Assemble
+    const cardGroup = new THREE.Group();
+    scene.add(cardGroup);
+
+    const edgeMesh = new THREE.Mesh(sideGeom, edgeMat);
+    cardGroup.add(edgeMesh);
+
     const frontMesh = new THREE.Mesh(faceGeom, frontMat);
-    frontMesh.position.z = thickness/2 + 0.001;
+    frontMesh.position.z = thickness/2 + 0.0012;
     cardGroup.add(frontMesh);
 
     const backMesh = new THREE.Mesh(faceGeom, backMat);
     backMesh.rotation.y = Math.PI;
-    backMesh.position.z = -thickness/2 - 0.001;
+    backMesh.position.z = -thickness/2 - 0.0012;
     cardGroup.add(backMesh);
 
-    // Initial pose
     cardGroup.rotation.x = -0.08;
     cardGroup.rotation.y = 0.55;
 
@@ -227,18 +256,18 @@
       new THREE.PlaneGeometry(6, 6),
       new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
     );
-    ground.rotation.x = -Math.PI / 2;
+    ground.rotation.x = -Math.PI/2;
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // iOS-safe image upload -> texture
+    // iOS-safe upload loader
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
       if (largest <= maxSize) return img;
       const s = maxSize / largest;
-      const w = Math.max(1, Math.round(w0 * s));
-      const h = Math.max(1, Math.round(h0 * s));
+      const w = Math.max(1, Math.round(w0*s));
+      const h = Math.max(1, Math.round(h0*s));
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
       c.getContext("2d").drawImage(img, 0, 0, w, h);
@@ -269,6 +298,8 @@
         maybeDown.onload = () => resolve(maybeDown);
         maybeDown.onerror = () => reject(new Error("Downscaled image decode failed"));
       });
+
+      log(`Decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
 
       const tex = new THREE.Texture(finalImg);
       tex.colorSpace = THREE.SRGBColorSpace;
@@ -319,7 +350,7 @@
     }
     animate();
 
-    log("Viewer ready ✅ (base model)");
+    log("Viewer ready ✅ (textures should show)");
   </script>
 </body>
 </html>
