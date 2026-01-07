@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Rounded Faces + Front Holo + Permanent Back)</title>
+  <title>Card Viewer (Thin + Front Holo + Permanent Back)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -49,7 +49,7 @@
     </label>
 
     <small>
-      Front gets holographic foil. Back uses <code>assets/pokemon-back.jpg</code>.<br/>
+      Thin card (no bevel). Front holo only. Back uses <code>assets/pokemon-back.jpg</code> + a thin border.<br/>
       Drag to rotate • Scroll to zoom • Right-drag to pan
     </small>
   </div>
@@ -99,11 +99,14 @@
     const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
     const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
-    // Card dimensions
+    // Card dimensions (THIN + NO BEVEL)
     const cardWidth = 0.63;
     const cardHeight = 0.88;
-    const thickness = 0.02;
+    const thickness = 0.004;     // ✅ thin like a real card
     const cornerRadius = 0.045;
+
+    // Back border (only on back, because front border is in the art)
+    const BACK_BORDER = 0.012;   // tweak: 0.008 thinner, 0.016 thicker
 
     function roundedRectShape(w, h, r) {
       const x = -w/2, y = -h/2;
@@ -117,14 +120,11 @@
       return s;
     }
 
-    // Extrude edge/bevel, then remove cap triangles so they don't cover the face meshes
+    // Extrude edge, then remove caps (NO BEVEL)
     function extrudeSidesOnly(shape) {
       const full = new THREE.ExtrudeGeometry(shape, {
         depth: thickness,
-        bevelEnabled: true,
-        bevelThickness: 0.004,
-        bevelSize: 0.004,
-        bevelSegments: 3,
+        bevelEnabled: false, // ✅ removes chunky rim
         curveSegments: 24
       });
       full.translate(0, 0, -thickness/2);
@@ -153,9 +153,9 @@
       return out;
     }
 
-    // ✅ Real rounded face geometry (no alpha mask, no plane seam)
-    function makeRoundedFaceGeometry() {
-      const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+    // Real rounded face geometry (no alpha cutout)
+    function makeRoundedFaceGeometry(w = cardWidth, h = cardHeight, r = cornerRadius) {
+      const shape = roundedRectShape(w, h, r);
       const g = new THREE.ShapeGeometry(shape, 24);
 
       // UVs from XY bounds
@@ -176,12 +176,32 @@
       return g;
     }
 
+    // Back border geometry (outer - inner hole)
+    function makeBorderGeometry(borderWidth) {
+      const outer = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+
+      const innerW = cardWidth  - borderWidth * 2;
+      const innerH = cardHeight - borderWidth * 2;
+      const innerR = Math.max(0.001, cornerRadius - borderWidth);
+
+      const inner = roundedRectShape(innerW, innerH, innerR);
+      outer.holes.push(inner);
+
+      const g = new THREE.ShapeGeometry(outer, 24);
+      g.computeVertexNormals();
+      return g;
+    }
+
     const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
     const sideGeom = extrudeSidesOnly(shape);
     const faceGeom = makeRoundedFaceGeometry();
 
     // Materials
-    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.92, metalness: 0.0 });
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: 0x2a2f38,   // ✅ slightly lighter, looks like a thin edge not a tube
+      roughness: 0.95,
+      metalness: 0.0
+    });
 
     const loader = new THREE.TextureLoader();
 
@@ -194,8 +214,7 @@
     );
     permanentBack.colorSpace = THREE.SRGBColorSpace;
     permanentBack.anisotropy = 8;
-    // If the back ever looks inverted, toggle this:
-    permanentBack.flipY = true;
+    permanentBack.flipY = true; // common correct orientation for TextureLoader
 
     // Default front placeholder
     const defaultFront = loader.load(
@@ -218,21 +237,40 @@
       metalness: 0.02
     });
 
-    // Build card group
+    // Card group
     const cardGroup = new THREE.Group();
     scene.add(cardGroup);
 
     cardGroup.add(new THREE.Mesh(sideGeom, edgeMat));
 
+    const Z_FACE = thickness/2 + 0.0007; // smaller offsets since card is thin
+    const Z_FILM = thickness/2 + 0.0010;
+
+    // Front face
     const frontMesh = new THREE.Mesh(faceGeom, frontMat);
-    frontMesh.position.z = thickness/2 + 0.0012;
+    frontMesh.position.z = Z_FACE;
     cardGroup.add(frontMesh);
 
+    // Back face
     const backMesh = new THREE.Mesh(faceGeom, backMat);
     backMesh.rotation.y = Math.PI;
-    backMesh.position.z = -thickness/2 - 0.0012;
+    backMesh.position.z = -Z_FACE;
     cardGroup.add(backMesh);
 
+    // ✅ Back-only border (front border comes from your front image)
+    const backBorderGeom = makeBorderGeometry(BACK_BORDER);
+    const backBorderMat = new THREE.MeshStandardMaterial({
+      color: 0x0b0f14,
+      roughness: 0.95,
+      metalness: 0.0
+    });
+
+    const backBorder = new THREE.Mesh(backBorderGeom, backBorderMat);
+    backBorder.rotation.y = Math.PI;
+    backBorder.position.z = -Z_FACE - 0.00015; // tiny lift above back face
+    cardGroup.add(backBorder);
+
+    // Pose
     cardGroup.rotation.x = -0.08;
     cardGroup.rotation.y = 0.55;
 
@@ -245,7 +283,7 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---- FRONT-ONLY HOLO FILM OVERLAY (uses same rounded face geometry) ----
+    // ---- FRONT-ONLY HOLO FILM OVERLAY ----
     function makeHoloFilmMaterial() {
       return new THREE.ShaderMaterial({
         transparent: true,
@@ -306,7 +344,7 @@
     frontFilmMat.polygonOffsetUnits = -1;
 
     const frontFilm = new THREE.Mesh(faceGeom, frontFilmMat);
-    frontFilm.position.z = thickness/2 + 0.0016;
+    frontFilm.position.z = Z_FILM;
     cardGroup.add(frontFilm);
 
     // ---- Front upload ----
@@ -352,7 +390,7 @@
       const tex = new THREE.Texture(finalImg);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 8;
-      tex.flipY = true; // front upload is correct in your current setup
+      tex.flipY = true; // front upload orientation is correct for you
       tex.needsUpdate = true;
 
       log(`Front decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight} ✅`);
