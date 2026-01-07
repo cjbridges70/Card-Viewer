@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Thin + Front Holo + Permanent Back)</title>
+  <title>Card Viewer (Thin + Front Holo + Height Map + Permanent Back)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -11,7 +11,7 @@
       position: fixed; top: 12px; left: 12px; z-index: 10;
       background: rgba(0,0,0,.6); color: #fff; padding: 12px; border-radius: 12px;
       backdrop-filter: blur(8px);
-      display: grid; gap: 10px; min-width: 290px; max-width: min(92vw, 380px);
+      display: grid; gap: 10px; min-width: 320px; max-width: min(92vw, 420px);
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
     #ui label { font-size: 12px; opacity: .95; display: grid; gap: 6px; }
@@ -24,9 +24,17 @@
       border: 1px solid rgba(255,255,255,.08);
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 200px;
+      max-height: 170px;
       overflow: auto;
       line-height: 1.25;
+    }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+    input[type="range"] { width: 190px; }
+    .pill {
+      font-size: 11px; opacity: .9;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.10);
+      padding: 4px 8px; border-radius: 999px;
     }
   </style>
 
@@ -48,8 +56,27 @@
       <input id="frontInput" type="file" accept="image/jpeg,image/png" />
     </label>
 
+    <label>Height map (grayscale JPG/PNG)
+      <input id="heightInput" type="file" accept="image/jpeg,image/png" />
+    </label>
+
+    <div class="row">
+      <label style="margin:0;">Relief (bump)</label>
+      <input id="bumpSlider" type="range" min="0" max="0.08" step="0.001" value="0.02" />
+    </div>
+
+    <div class="row">
+      <label style="margin:0;">Holo strength</label>
+      <input id="holoSlider" type="range" min="0" max="1" step="0.01" value="0.55" />
+    </div>
+
+    <div class="row">
+      <label style="margin:0;">Holo reacts to height</label>
+      <input id="holoReliefSlider" type="range" min="0" max="2" step="0.01" value="0.90" />
+    </div>
+
     <small>
-      Thin card (no bevel). Front holo only. Back uses <code>assets/pokemon-back.jpg</code> + a thin border.<br/>
+      Back is permanent: <span class="pill">assets/pokemon-back.jpg</span><br/>
       Drag to rotate • Scroll to zoom • Right-drag to pan
     </small>
   </div>
@@ -99,14 +126,11 @@
     const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
     const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
-    // Card dimensions (THIN + NO BEVEL)
+    // Card dimensions (thin, no bevel)
     const cardWidth = 0.63;
     const cardHeight = 0.88;
-    const thickness = 0.004;     // ✅ thin like a real card
+    const thickness = 0.004;
     const cornerRadius = 0.045;
-
-    // Back border (only on back, because front border is in the art)
-    const BACK_BORDER = 0.012;   // tweak: 0.008 thinner, 0.016 thicker
 
     function roundedRectShape(w, h, r) {
       const x = -w/2, y = -h/2;
@@ -120,11 +144,11 @@
       return s;
     }
 
-    // Extrude edge, then remove caps (NO BEVEL)
+    // Extrude edge, remove caps (no bevel)
     function extrudeSidesOnly(shape) {
       const full = new THREE.ExtrudeGeometry(shape, {
         depth: thickness,
-        bevelEnabled: false, // ✅ removes chunky rim
+        bevelEnabled: false,
         curveSegments: 24
       });
       full.translate(0, 0, -thickness/2);
@@ -140,7 +164,6 @@
       for (let i = 0; i < pos.count; i += 3) {
         const nz = (nor.getZ(i) + nor.getZ(i+1) + nor.getZ(i+2)) / 3;
         if (Math.abs(nz) > 0.6) continue; // remove front/back caps
-
         for (let k = 0; k < 3; k++) {
           keptPos.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
           keptNor.push(nor.getX(i+k), nor.getY(i+k), nor.getZ(i+k));
@@ -153,10 +176,10 @@
       return out;
     }
 
-    // Real rounded face geometry (no alpha cutout)
-    function makeRoundedFaceGeometry(w = cardWidth, h = cardHeight, r = cornerRadius) {
-      const shape = roundedRectShape(w, h, r);
-      const g = new THREE.ShapeGeometry(shape, 24);
+    // Higher tessellation face so bump/foil looks nicer
+    function makeRoundedFaceGeometry() {
+      const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+      const g = new THREE.ShapeGeometry(shape, 64); // higher segments
 
       // UVs from XY bounds
       g.computeBoundingBox();
@@ -176,29 +199,13 @@
       return g;
     }
 
-    // Back border geometry (outer - inner hole)
-    function makeBorderGeometry(borderWidth) {
-      const outer = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-
-      const innerW = cardWidth  - borderWidth * 2;
-      const innerH = cardHeight - borderWidth * 2;
-      const innerR = Math.max(0.001, cornerRadius - borderWidth);
-
-      const inner = roundedRectShape(innerW, innerH, innerR);
-      outer.holes.push(inner);
-
-      const g = new THREE.ShapeGeometry(outer, 24);
-      g.computeVertexNormals();
-      return g;
-    }
-
     const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
     const sideGeom = extrudeSidesOnly(shape);
     const faceGeom = makeRoundedFaceGeometry();
 
     // Materials
     const edgeMat = new THREE.MeshStandardMaterial({
-      color: 0x2a2f38,   // ✅ slightly lighter, looks like a thin edge not a tube
+      color: 0x2a2f38,
       roughness: 0.95,
       metalness: 0.0
     });
@@ -214,7 +221,7 @@
     );
     permanentBack.colorSpace = THREE.SRGBColorSpace;
     permanentBack.anisotropy = 8;
-    permanentBack.flipY = true; // common correct orientation for TextureLoader
+    permanentBack.flipY = true; // if your back is upside down, flip this to false
 
     // Default front placeholder
     const defaultFront = loader.load(
@@ -225,10 +232,18 @@
     defaultFront.anisotropy = 8;
     defaultFront.flipY = false;
 
+    // Default 1x1 mid-gray height texture (so shader always has something)
+    const defaultHeight = new THREE.DataTexture(new Uint8Array([128]), 1, 1, THREE.RedFormat);
+    defaultHeight.colorSpace = THREE.NoColorSpace;
+    defaultHeight.flipY = true;
+    defaultHeight.needsUpdate = true;
+
     const frontMat = new THREE.MeshStandardMaterial({
       map: defaultFront,
       roughness: 0.55,
-      metalness: 0.05
+      metalness: 0.05,
+      bumpMap: defaultHeight,
+      bumpScale: 0.02
     });
 
     const backMat = new THREE.MeshStandardMaterial({
@@ -243,32 +258,17 @@
 
     cardGroup.add(new THREE.Mesh(sideGeom, edgeMat));
 
-    const Z_FACE = thickness/2 + 0.0007; // smaller offsets since card is thin
+    const Z_FACE = thickness/2 + 0.0007;
     const Z_FILM = thickness/2 + 0.0010;
 
-    // Front face
     const frontMesh = new THREE.Mesh(faceGeom, frontMat);
     frontMesh.position.z = Z_FACE;
     cardGroup.add(frontMesh);
 
-    // Back face
     const backMesh = new THREE.Mesh(faceGeom, backMat);
     backMesh.rotation.y = Math.PI;
     backMesh.position.z = -Z_FACE;
     cardGroup.add(backMesh);
-
-    // ✅ Back-only border (front border comes from your front image)
-    const backBorderGeom = makeBorderGeometry(BACK_BORDER);
-    const backBorderMat = new THREE.MeshStandardMaterial({
-      color: 0x0b0f14,
-      roughness: 0.95,
-      metalness: 0.0
-    });
-
-    const backBorder = new THREE.Mesh(backBorderGeom, backBorderMat);
-    backBorder.rotation.y = Math.PI;
-    backBorder.position.z = -Z_FACE - 0.00015; // tiny lift above back face
-    cardGroup.add(backBorder);
 
     // Pose
     cardGroup.rotation.x = -0.08;
@@ -283,25 +283,34 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---- FRONT-ONLY HOLO FILM OVERLAY ----
-    function makeHoloFilmMaterial() {
+    // ---- FRONT-ONLY HOLO FILM OVERLAY (reacts to height map) ----
+    function makeHoloFilmMaterial(heightTex) {
       return new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         uniforms: {
           uTime: { value: 0.0 },
-          uStrength: { value: 0.55 }
+          uStrength: { value: 0.55 },
+          uHeight: { value: heightTex },
+          uRelief: { value: 0.90 } // how much foil reacts to height gradients
         },
         vertexShader: `
           varying vec2 vUv;
           varying vec3 vN;
           varying vec3 vV;
+          varying vec3 vTx;
+          varying vec3 vTy;
           void main() {
             vUv = uv;
             vec4 mv = modelViewMatrix * vec4(position, 1.0);
             vV = -mv.xyz;
             vN = normalize(normalMatrix * normal);
+
+            // Face basis vectors in view space (works because face is in XY plane)
+            vTx = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
+            vTy = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));
+
             gl_Position = projectionMatrix * mv;
           }
         `,
@@ -310,8 +319,13 @@
           varying vec2 vUv;
           varying vec3 vN;
           varying vec3 vV;
+          varying vec3 vTx;
+          varying vec3 vTy;
+
           uniform float uTime;
           uniform float uStrength;
+          uniform sampler2D uHeight;
+          uniform float uRelief;
 
           float hash21(vec2 p){
             p = fract(p*vec2(123.34, 456.21));
@@ -320,25 +334,42 @@
           }
 
           void main() {
-            vec3 N = normalize(vN);
+            // Height sampling + gradient (fake normal perturb for foil)
+            float eps = 0.0015;
+            float hC = texture2D(uHeight, vUv).r;
+            float hX1 = texture2D(uHeight, vUv + vec2(eps, 0.0)).r;
+            float hX0 = texture2D(uHeight, vUv - vec2(eps, 0.0)).r;
+            float hY1 = texture2D(uHeight, vUv + vec2(0.0, eps)).r;
+            float hY0 = texture2D(uHeight, vUv - vec2(0.0, eps)).r;
+
+            float dx = (hX1 - hX0);
+            float dy = (hY1 - hY0);
+
+            vec3 N = normalize(vN + (-dx * uRelief) * vTx + (-dy * uRelief) * vTy);
             vec3 V = normalize(vV);
+
             float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
 
-            float bands = sin(vUv.y*70.0 + vUv.x*18.0 + uTime*1.6) * 0.5 + 0.5;
-            float diag  = sin(vUv.x*90.0 + vUv.y*55.0 + uTime*0.9) * 0.5 + 0.5;
-            float sparkle = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2)) * 0.7;
+            // Modern-style foil: bands + diagonal + sparkle, influenced by height
+            float bands = sin(vUv.y*70.0 + vUv.x*18.0 + uTime*1.6 + hC*6.0) * 0.5 + 0.5;
+            float diag  = sin(vUv.x*90.0 + vUv.y*55.0 + uTime*0.9 + hC*4.0) * 0.5 + 0.5;
+
+            float sparkle = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2 + hC*2.0)) * 0.7;
 
             vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
-            vec3 film = rainbow*(0.10 + 0.85*fres) + rainbow*(diag*0.08) + sparkle;
+            vec3 film = rainbow*(0.08 + 0.92*fres) + rainbow*(diag*0.07) + sparkle;
 
-            float a = clamp((0.10 + 0.9*fres) * uStrength, 0.0, 1.0);
+            // A little “height gating” makes ridges catch more foil
+            float ridge = smoothstep(0.45, 0.75, hC);
+            float a = clamp((0.10 + 0.9*fres) * uStrength * (0.85 + 0.35*ridge), 0.0, 1.0);
+
             gl_FragColor = vec4(film * a, a);
           }
         `
       });
     }
 
-    const frontFilmMat = makeHoloFilmMaterial();
+    const frontFilmMat = makeHoloFilmMaterial(defaultHeight);
     frontFilmMat.polygonOffset = true;
     frontFilmMat.polygonOffsetFactor = -1;
     frontFilmMat.polygonOffsetUnits = -1;
@@ -347,7 +378,7 @@
     frontFilm.position.z = Z_FILM;
     cardGroup.add(frontFilm);
 
-    // ---- Front upload ----
+    // ---- File loaders (iOS-safe) ----
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
@@ -363,9 +394,7 @@
       return out;
     }
 
-    async function loadFrontTextureFromFile(file, maxSize=2048) {
-      log(`Front picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
-
+    async function loadTextureFromFile(file, maxSize=2048, { isData=false } = {}) {
       const dataURL = await new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onerror = () => reject(new Error("FileReader failed"));
@@ -388,27 +417,72 @@
       });
 
       const tex = new THREE.Texture(finalImg);
-      tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 8;
-      tex.flipY = true; // front upload orientation is correct for you
-      tex.needsUpdate = true;
 
-      log(`Front decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight} ✅`);
-      return tex;
+      // Your setup: front uploads look correct with flipY=true
+      tex.flipY = true;
+
+      // Color space handling
+      tex.colorSpace = isData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+
+      tex.needsUpdate = true;
+      return { tex, w: finalImg.naturalWidth, h: finalImg.naturalHeight };
     }
+
+    // ---- UI Wiring ----
+    const bumpSlider = document.getElementById("bumpSlider");
+    const holoSlider = document.getElementById("holoSlider");
+    const holoReliefSlider = document.getElementById("holoReliefSlider");
+
+    bumpSlider.addEventListener("input", () => {
+      frontMat.bumpScale = parseFloat(bumpSlider.value);
+      frontMat.needsUpdate = true;
+    });
+
+    holoSlider.addEventListener("input", () => {
+      frontFilmMat.uniforms.uStrength.value = parseFloat(holoSlider.value);
+    });
+
+    holoReliefSlider.addEventListener("input", () => {
+      frontFilmMat.uniforms.uRelief.value = parseFloat(holoReliefSlider.value);
+    });
 
     document.getElementById("frontInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        const tex = await loadFrontTextureFromFile(file, 2048);
+        log(`Front picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+        const { tex, w, h } = await loadTextureFromFile(file, 2048, { isData:false });
         if (frontMat.map) frontMat.map.dispose();
         frontMat.map = tex;
         frontMat.needsUpdate = true;
-        log("Front applied ✅");
+        log(`Front applied ✅ ${w}x${h}`);
       } catch (err) {
         log("Front failed ❌ " + err.message);
         alert("Front failed: " + err.message);
+      }
+    });
+
+    document.getElementById("heightInput").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        log(`Height picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+        const { tex, w, h } = await loadTextureFromFile(file, 2048, { isData:true });
+
+        // Apply to front material as bump map (relief lighting)
+        if (frontMat.bumpMap && frontMat.bumpMap !== defaultHeight) frontMat.bumpMap.dispose();
+        frontMat.bumpMap = tex;
+        frontMat.bumpScale = parseFloat(bumpSlider.value);
+        frontMat.needsUpdate = true;
+
+        // Apply to holo shader so foil reacts to relief
+        frontFilmMat.uniforms.uHeight.value = tex;
+
+        log(`Height applied ✅ ${w}x${h}`);
+      } catch (err) {
+        log("Height failed ❌ " + err.message);
+        alert("Height failed: " + err.message);
       }
     });
 
