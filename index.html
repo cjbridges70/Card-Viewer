@@ -1,817 +1,926 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Card Viewer (Studio + Realistic Holo + Safe Emboss)</title>
+  <title>Card Viewer</title>
   <style>
-    html,body{height:100%;margin:0;overflow:hidden;background:#0b0e12;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
-    #hud{position:fixed;left:12px;top:12px;right:12px;z-index:10;display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:#e7eefc;}
-    .pill{
-      background:rgba(18,20,26,.78);border:1px solid rgba(255,255,255,.10);
-      border-radius:14px;padding:8px 10px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-      box-shadow:0 10px 30px rgba(0,0,0,.35);
-      display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    html, body { height: 100%; margin: 0; background: #07090d; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* Top bar */
+    .topbar {
+      position: fixed; left: 12px; right: 12px; top: 10px;
+      display: flex; gap: 10px; align-items: center;
+      padding: 10px 12px;
+      background: rgba(20, 24, 33, 0.62);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 14px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 10;
+      color: rgba(255,255,255,0.9);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
     }
-    select,button,input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#e7eefc;border-radius:10px;padding:8px 10px;font-size:14px;}
-    button{cursor:pointer}
-    #status{margin-left:auto;opacity:.9}
-    #log{
-      position:fixed;left:12px;bottom:12px;width:min(900px,calc(100% - 24px));
-      max-height:35vh;overflow:auto;white-space:pre-wrap;
-      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.25;
-      color:#e7eefc;background:rgba(9,12,16,.72);border:1px solid rgba(255,255,255,.10);
-      border-radius:14px;padding:10px 12px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-      display:none;
+    .topbar .left { display: flex; gap: 10px; align-items: center; flex: 1; min-width: 0; }
+    .topbar .right { display: flex; gap: 10px; align-items: center; }
+    select, button, input[type="file"] {
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.92);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 14px;
+      outline: none;
     }
-    #log.on{display:block}
-    canvas{display:block;width:100%;height:100%}
-    label{display:flex;gap:8px;align-items:center}
-    .small{font-size:12px;opacity:.85}
-    input[type="checkbox"]{width:18px;height:18px}
+    button { cursor: pointer; }
+    button:active { transform: translateY(1px); }
+
+    /* Panel */
+    .panel {
+      position: fixed; right: 12px; top: 78px;
+      width: min(360px, calc(100vw - 24px));
+      background: rgba(20, 24, 33, 0.62);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      padding: 12px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 10;
+      color: rgba(255,255,255,0.9);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    .panel h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.04em; opacity: 0.9; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
+    .row label { font-size: 12px; opacity: 0.85; display: flex; justify-content: space-between; align-items: center; gap: 10px;}
+    .row small { opacity: 0.7; }
+    .toggles { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 10px 0; }
+    .toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 10px 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px;
+      font-size: 13px;
+    }
+    .toggle input { transform: scale(1.15); }
+    .slider {
+      display: grid; grid-template-columns: 1fr 70px;
+      gap: 10px; align-items: center;
+      margin: 8px 0;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    .slider input[type="range"] { width: 100%; }
+    .slider .val { text-align: right; opacity: 0.9; }
+
+    .hint {
+      margin-top: 10px;
+      font-size: 12px;
+      opacity: 0.75;
+      line-height: 1.35;
+    }
+
+    .log {
+      position: fixed; left: 12px; bottom: 12px;
+      width: min(520px, calc(100vw - 24px));
+      background: rgba(10, 12, 18, 0.72);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      padding: 10px 12px;
+      color: rgba(255,255,255,0.86);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      max-height: 30vh;
+      overflow: auto;
+      display: none;
+      z-index: 10;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
   </style>
+
+  <!-- IMPORTANT: fix OrbitControls importing from 'three' -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./libs/three.module.js"
+      }
+    }
+  </script>
 </head>
+
 <body>
-  <div id="hud">
-    <div class="pill">
+  <div id="app"></div>
+
+  <div class="topbar">
+    <div class="left">
       <select id="preset">
         <option value="ray">Mega Rayquaza</option>
         <option value="blast">Mega Blastoise</option>
       </select>
       <button id="reload">Reload</button>
-      <button id="reset">Reset View</button>
+      <button id="resetView">Reset View</button>
       <button id="toggleLog">Toggle Log</button>
+      <span id="status" style="opacity:.75; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></span>
     </div>
-
-    <div class="pill">
-      <label><span class="small">Front</span><input id="frontFile" type="file" accept="image/*"></label>
-      <label><span class="small">Height</span><input id="heightFile" type="file" accept="image/*"></label>
-      <label><span class="small">Mask</span><input id="maskFile" type="file" accept="image/*"></label>
+    <div class="right">
+      <span style="opacity:.65; font-size:12px;">Drag to rotate • Pinch/scroll to zoom</span>
     </div>
-
-    <div class="pill">
-      <label><input id="useHolo" type="checkbox" checked><span class="small">Holo (front)</span></label>
-      <label><input id="useEmboss" type="checkbox" checked><span class="small">Emboss</span></label>
-      <label><input id="useAutoHeight" type="checkbox" checked><span class="small">Auto-height</span></label>
-      <label><input id="useAutoMask" type="checkbox" checked><span class="small">Auto-mask Pokémon</span></label>
-    </div>
-
-    <div id="status" class="pill">Booting…</div>
   </div>
 
-  <div id="log"></div>
+  <div class="panel">
+    <h3>IMAGES</h3>
+    <div class="row">
+      <label>Front (upload) <small>(optional)</small> <input id="frontFile" type="file" accept="image/*"></label>
+      <label>Height (grayscale) <small>(optional)</small> <input id="heightFile" type="file" accept="image/*"></label>
+      <label>Mask <small>(optional)</small> <input id="maskFile" type="file" accept="image/*"></label>
+    </div>
+
+    <h3>EFFECTS</h3>
+    <div class="toggles">
+      <div class="toggle"><span>Holo (front)</span><input id="holoOn" type="checkbox" checked></div>
+      <div class="toggle"><span>Emboss</span><input id="embossOn" type="checkbox" checked></div>
+      <div class="toggle"><span>Auto-height</span><input id="autoHeightOn" type="checkbox" checked></div>
+      <div class="toggle"><span>Auto-mask Pokémon</span><input id="autoMaskOn" type="checkbox" checked></div>
+    </div>
+
+    <h3>TUNING</h3>
+
+    <div class="slider">
+      <label for="holoStrength">Holo Strength</label>
+      <div class="val" id="holoStrengthVal"></div>
+      <input id="holoStrength" type="range" min="0" max="3" step="0.01" value="1.65" style="grid-column:1 / span 2;">
+    </div>
+
+    <div class="slider">
+      <label for="holoReact">Holo Reactivity (1:1 tilt)</label>
+      <div class="val" id="holoReactVal"></div>
+      <input id="holoReact" type="range" min="0" max="2.5" step="0.01" value="1.75" style="grid-column:1 / span 2;">
+    </div>
+
+    <div class="slider">
+      <label for="embossStrength">Emboss Strength (legible)</label>
+      <div class="val" id="embossStrengthVal"></div>
+      <input id="embossStrength" type="range" min="0" max="4" step="0.01" value="1.35" style="grid-column:1 / span 2;">
+    </div>
+
+    <div class="hint">
+      This version keeps the holo “wavy” but anchors it to the card surface and drives it by view angle (no time-sweep).
+      Emboss affects normals/specular only, so text stays readable.
+    </div>
+  </div>
+
+  <div class="log" id="log"></div>
 
   <script type="module">
-    import * as THREE from './libs/three.module.js';
+    import * as THREE from 'three';
+    import { OrbitControls } from './libs/examples/jsm/controls/OrbitControls.js';
 
-    const PATH_BACK = './assets/pokemon-back.jpg';
-    const PRESETS = {
-      ray:   './assets/presets/mega-rayquaza-front.JPG',
-      blast: './assets/presets/mega-blastoise-front.JPG'
-    };
+    // ---------- Utilities ----------
+    const $ = (id) => document.getElementById(id);
+    const logEl = $('log');
+    const statusEl = $('status');
 
-    const logEl = document.getElementById('log');
-    const statusEl = document.getElementById('status');
-    const ui = {
-      preset: document.getElementById('preset'),
-      reload: document.getElementById('reload'),
-      reset: document.getElementById('reset'),
-      toggleLog: document.getElementById('toggleLog'),
-      frontFile: document.getElementById('frontFile'),
-      heightFile: document.getElementById('heightFile'),
-      maskFile: document.getElementById('maskFile'),
-      useHolo: document.getElementById('useHolo'),
-      useEmboss: document.getElementById('useEmboss'),
-      useAutoHeight: document.getElementById('useAutoHeight'),
-      useAutoMask: document.getElementById('useAutoMask'),
-    };
-    function log(s){ logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
-    function status(s){ statusEl.textContent = s; }
-    ui.toggleLog.onclick = ()=> logEl.classList.toggle('on');
+    function logLine(msg) {
+      logEl.textContent += msg + "\\n";
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(msg);
+    }
 
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+    }
+
+    function clamp01(x){ return Math.min(1, Math.max(0, x)); }
+
+    async function loadImageBitmapFromUrl(url) {
+      const res = await fetch(url, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`Fetch failed: ${url} (${res.status})`);
+      const blob = await res.blob();
+      return await createImageBitmap(blob);
+    }
+
+    async function loadImageBitmapFromFile(file) {
+      const bmp = await createImageBitmap(file);
+      return bmp;
+    }
+
+    function bitmapToTexture(bmp, { srgb = true } = {}) {
+      const tex = new THREE.Texture(bmp);
+      tex.needsUpdate = true;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = 8;
+      tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      return tex;
+    }
+
+    function makeCanvas(w, h) {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      return c;
+    }
+
+    function getImageDataFromBitmap(bmp) {
+      const c = makeCanvas(bmp.width, bmp.height);
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bmp, 0, 0);
+      return ctx.getImageData(0, 0, bmp.width, bmp.height);
+    }
+
+    function imageDataToTexture(imgData, { srgb = false } = {}) {
+      const c = makeCanvas(imgData.width, imgData.height);
+      c.getContext('2d').putImageData(imgData, 0, 0);
+      const tex = new THREE.CanvasTexture(c);
+      tex.needsUpdate = true;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = 8;
+      tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      return tex;
+    }
+
+    function blurBox(imgData, passes = 2) {
+      // Simple (fast-ish) separable-ish box blur on CPU
+      const { width:w, height:h, data } = imgData;
+      const out = new Uint8ClampedArray(data.length);
+      let src = new Uint8ClampedArray(data);
+      let dst = out;
+
+      const radius = 2;
+      for (let p=0; p<passes; p++) {
+        // horizontal
+        for (let y=0; y<h; y++) {
+          for (let x=0; x<w; x++) {
+            let r=0,g=0,b=0,a=0, n=0;
+            for (let k=-radius; k<=radius; k++) {
+              const xx = Math.min(w-1, Math.max(0, x+k));
+              const i = (y*w + xx)*4;
+              r += src[i]; g += src[i+1]; b += src[i+2]; a += src[i+3];
+              n++;
+            }
+            const o = (y*w + x)*4;
+            dst[o] = r/n; dst[o+1]=g/n; dst[o+2]=b/n; dst[o+3]=a/n;
+          }
+        }
+        // vertical
+        const tmp = new Uint8ClampedArray(dst);
+        for (let y=0; y<h; y++) {
+          for (let x=0; x<w; x++) {
+            let r=0,g=0,b=0,a=0, n=0;
+            for (let k=-radius; k<=radius; k++) {
+              const yy = Math.min(h-1, Math.max(0, y+k));
+              const i = (yy*w + x)*4;
+              r += tmp[i]; g += tmp[i+1]; b += tmp[i+2]; a += tmp[i+3];
+              n++;
+            }
+            const o = (y*w + x)*4;
+            dst[o] = r/n; dst[o+1]=g/n; dst[o+2]=b/n; dst[o+3]=a/n;
+          }
+        }
+        src = new Uint8ClampedArray(dst);
+      }
+      imgData.data.set(src);
+      return imgData;
+    }
+
+    function buildAutoHeightFromFront(frontBmp) {
+      // Height = soft luminance + a small non-tiling micro emboss.
+      const img = getImageDataFromBitmap(frontBmp);
+      const d = img.data;
+      const w = img.width, h = img.height;
+
+      // luminance (soft)
+      for (let i=0; i<d.length; i+=4) {
+        const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+        // perceptual-ish
+        const y = (0.2126*r + 0.7152*g + 0.0722*b);
+        const v = Math.round(clamp01(y) * 255);
+        d[i]=d[i+1]=d[i+2]=v;
+        d[i+3]=255;
+      }
+      blurBox(img, 3);
+
+      // add subtle micro structure
+      for (let y=0; y<h; y++) {
+        for (let x=0; x<w; x++) {
+          const i = (y*w + x)*4;
+          const u = x/w, v = y/h;
+          // micro pattern: non-tiling-ish by mixing frequencies
+          const m =
+            0.5 +
+            0.25*Math.sin((u*173.1 + v*91.7)*Math.PI*2) +
+            0.20*Math.sin((u*71.3 - v*131.9)*Math.PI*2) +
+            0.10*Math.sin((u*311.7 + v*203.9)*Math.PI*2);
+          const base = d[i]/255;
+          const mix = clamp01(base*0.88 + m*0.12);
+          const vv = Math.round(mix*255);
+          d[i]=d[i+1]=d[i+2]=vv;
+        }
+      }
+      return img;
+    }
+
+    function heightToNormalMap(heightImgData, strength = 2.0) {
+      // Sobel-ish -> normal map
+      const { width:w, height:h, data:d } = heightImgData;
+      const out = new ImageData(w, h);
+      const o = out.data;
+
+      const getH = (x,y) => {
+        x = Math.min(w-1, Math.max(0, x));
+        y = Math.min(h-1, Math.max(0, y));
+        return d[(y*w + x)*4] / 255;
+      };
+
+      for (let y=0; y<h; y++) {
+        for (let x=0; x<w; x++) {
+          const hl = getH(x-1,y), hr = getH(x+1,y);
+          const hu = getH(x,y-1), hd = getH(x,y+1);
+
+          // gradient
+          let dx = (hr - hl) * strength;
+          let dy = (hd - hu) * strength;
+
+          // normal
+          let nx = -dx;
+          let ny = -dy;
+          let nz = 1.0;
+          const len = Math.hypot(nx, ny, nz);
+          nx/=len; ny/=len; nz/=len;
+
+          const i = (y*w + x)*4;
+          o[i]   = Math.round((nx*0.5+0.5)*255);
+          o[i+1] = Math.round((ny*0.5+0.5)*255);
+          o[i+2] = Math.round((nz*0.5+0.5)*255);
+          o[i+3] = 255;
+        }
+      }
+      return out;
+    }
+
+    function buildAutoMaskFromFront(frontBmp) {
+      // Goal: protect subject (Pokémon) from holo more than background.
+      // Heuristic: center bias + saturation/edge/contrast -> foreground-ish.
+      const img = getImageDataFromBitmap(frontBmp);
+      const d = img.data;
+      const w = img.width, h = img.height;
+
+      // compute crude saliency
+      const sal = new Float32Array(w*h);
+
+      function rgb2hsv(r,g,b){
+        const max = Math.max(r,g,b), min = Math.min(r,g,b);
+        const c = max-min;
+        const s = max === 0 ? 0 : c/max;
+        const v = max;
+        return { s, v };
+      }
+
+      for (let y=0; y<h; y++) {
+        for (let x=0; x<w; x++) {
+          const i = (y*w + x)*4;
+          const r = d[i]/255, g=d[i+1]/255, b=d[i+2]/255;
+          const { s, v } = rgb2hsv(r,g,b);
+
+          // edge-ish (local contrast)
+          const r2 = d[Math.min(d.length-4, i+4)]/255;
+          const v2 = (0.2126*r2 + 0.7152*(d[Math.min(d.length-3, i+5)]/255) + 0.0722*(d[Math.min(d.length-2, i+6)]/255));
+          const v1 = (0.2126*r + 0.7152*g + 0.0722*b);
+          const edge = Math.abs(v2 - v1);
+
+          const cx = (x/(w-1) - 0.5), cy = (y/(h-1) - 0.5);
+          const center = Math.exp(-(cx*cx + cy*cy) / 0.18); // strong center bias
+
+          // subject tends to have edges + saturation, and often sits central
+          const score = 0.55*center + 0.25*s + 0.20*edge;
+          sal[y*w + x] = score;
+        }
+      }
+
+      // normalize + threshold into a soft mask
+      let mn = Infinity, mx = -Infinity;
+      for (let i=0;i<sal.length;i++){ mn=Math.min(mn,sal[i]); mx=Math.max(mx,sal[i]); }
+      const range = Math.max(1e-6, mx-mn);
+
+      const out = new ImageData(w,h);
+      const o = out.data;
+
+      for (let y=0; y<h; y++){
+        for (let x=0; x<w; x++){
+          const s = (sal[y*w + x]-mn)/range;
+
+          // soften and keep *subject* = 1.0 (protected)
+          // threshold tuned to be conservative (don’t accidentally protect whole background)
+          const m = clamp01((s - 0.42) / (0.78 - 0.42));
+          const mm = m*m*(3-2*m); // smoothstep
+
+          const i = (y*w + x)*4;
+          const v = Math.round(mm*255);
+          o[i]=o[i+1]=o[i+2]=v; o[i+3]=255;
+        }
+      }
+
+      blurBox(out, 2);
+      return out;
+    }
+
+    function roundedRectShape(w, h, r) {
+      // r in same units as w,h (card units)
+      const s = new THREE.Shape();
+      const x = -w/2, y = -h/2;
+      const rr = Math.min(r, w/2, h/2);
+      s.moveTo(x+rr, y);
+      s.lineTo(x+w-rr, y);
+      s.quadraticCurveTo(x+w, y, x+w, y+rr);
+      s.lineTo(x+w, y+h-rr);
+      s.quadraticCurveTo(x+w, y+h, x+w-rr, y+h);
+      s.lineTo(x+rr, y+h);
+      s.quadraticCurveTo(x, y+h, x, y+h-rr);
+      s.lineTo(x, y+rr);
+      s.quadraticCurveTo(x, y, x+rr, y);
+      return s;
+    }
+
+    // ---------- Three.js scene ----------
+    const container = document.getElementById('app');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, otherwise: undefined });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    // You asked about tone mapping: we can keep it OFF here because we're manually controlling exposure.
-    // If you want toneMapping later, we can flip it on once the shader is stable.
-    renderer.toneMapping = THREE.NoToneMapping;
+    // Tone mapping to prevent blowout and tame contrast:
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
 
-    document.body.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0e12);
+    scene.background = new THREE.Color(0x07090d);
 
-    const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.01, 50);
+    const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.01, 100);
+    camera.position.set(0, 0.08, 3.15); // farther at load-in
 
-    // Studio lighting (balanced, no harsh crush)
-    scene.add(new THREE.AmbientLight(0xffffff, 1.55));
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 1.95));
-    const key = new THREE.DirectionalLight(0xffffff, 3.2); key.position.set(1.6, 2.2, 2.4); scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 2.2); fill.position.set(-2.2, 0.8, 2.2); scene.add(fill);
-    const rim  = new THREE.DirectionalLight(0xffffff, 1.6); rim.position.set(0.0, 1.9, -2.2); scene.add(rim);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.rotateSpeed = 0.75;
+    controls.zoomSpeed = 0.9;
+    controls.enablePan = false;
 
-    // Orbit (simple) — start farther away
-    const state = {
-      target:new THREE.Vector3(0,0.02,0),
-      yaw:0.35, pitch:-0.10,
-      dist:2.85,
-      dragging:false, lastX:0, lastY:0, pinchDist:0
-    };
-    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-    function updateCamera(){
-      const cp=Math.cos(state.pitch), sp=Math.sin(state.pitch);
-      const cy=Math.cos(state.yaw),   sy=Math.sin(state.yaw);
-      const x=state.dist*cp*sy, y=state.dist*sp, z=state.dist*cp*cy;
-      camera.position.set(state.target.x+x, state.target.y+y, state.target.z+z);
-      camera.lookAt(state.target);
-    }
-    updateCamera();
+    // "Studio" lighting: soft key + fill + rim + faint overhead
+    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    key.position.set(2.2, 2.8, 2.0);
+    scene.add(key);
 
-    const canvas = renderer.domElement;
-    canvas.addEventListener('pointerdown', (e)=>{ state.dragging=true; state.lastX=e.clientX; state.lastY=e.clientY; canvas.setPointerCapture(e.pointerId); });
-    canvas.addEventListener('pointerup', (e)=>{ state.dragging=false; try{canvas.releasePointerCapture(e.pointerId);}catch{} });
-    canvas.addEventListener('pointermove', (e)=>{
-      if(!state.dragging) return;
-      const dx=e.clientX-state.lastX, dy=e.clientY-state.lastY;
-      state.lastX=e.clientX; state.lastY=e.clientY;
-      state.yaw -= dx*0.007;
-      state.pitch += dy*0.007;
-      state.pitch = clamp(state.pitch, -1.2, 0.9);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.95);
+    fill.position.set(-2.8, 1.2, 1.6);
+    scene.add(fill);
+
+    const rim = new THREE.DirectionalLight(0xffffff, 1.15);
+    rim.position.set(-1.8, 2.2, -2.4);
+    scene.add(rim);
+
+    const amb = new THREE.AmbientLight(0xffffff, 0.18);
+    scene.add(amb);
+
+    // ---------- Card mesh ----------
+    const CARD_W = 2.5;
+    const CARD_H = CARD_W * 3.5/2.5; // tcg aspect-ish
+    // Pokémon corners are not super round: keep modest radius
+    const CORNER_R = 0.14;
+
+    const shape = roundedRectShape(CARD_W, CARD_H, CORNER_R);
+    const geom = new THREE.ShapeGeometry(shape, 24);
+    geom.computeVertexNormals();
+
+    // small thickness via second mesh (cheap)
+    const backGeom = geom.clone();
+
+    // placeholder textures until loaded
+    const dummy = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1,1);
+    dummy.needsUpdate = true;
+    dummy.colorSpace = THREE.SRGBColorSpace;
+
+    let frontTex = dummy;
+    let backTex  = dummy;
+    let heightTex = null;
+    let maskTex = null;
+
+    const frontMat = new THREE.MeshPhysicalMaterial({
+      map: frontTex,
+      roughness: 0.40,
+      metalness: 0.05,
+      clearcoat: 0.25,
+      clearcoatRoughness: 0.20,
+      sheen: 0.0
     });
-    canvas.addEventListener('wheel', (e)=>{ e.preventDefault(); state.dist *= (e.deltaY>0)?1.06:0.94; state.dist = clamp(state.dist, 1.8, 6.0); }, {passive:false});
-    ui.reset.onclick=()=>{ state.yaw=0.35; state.pitch=-0.10; state.dist=2.85; updateCamera(); };
 
-    // ===== image helpers =====
-    async function loadImageToCanvas(source) {
-      const img = await new Promise((resolve, reject) => {
-        const im = new Image();
-        im.crossOrigin = 'anonymous';
-        im.onload = () => resolve(im);
-        im.onerror = (e) => reject(e);
-        if (source instanceof Blob) im.src = URL.createObjectURL(source);
-        else im.src = source;
-      });
-      const c = document.createElement('canvas');
-      c.width = img.naturalWidth || img.width;
-      c.height = img.naturalHeight || img.height;
-      const ctx = c.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0);
-      return c;
-    }
-    function scaleCanvasMax(src, maxDim){
-      const w = src.width, h = src.height, m = Math.max(w,h);
-      if(m <= maxDim) return src;
-      const s = maxDim / m;
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(w*s));
-      c.height = Math.max(1, Math.round(h*s));
-      const ctx = c.getContext('2d', { willReadFrequently:true });
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(src, 0, 0, c.width, c.height);
-      return c;
-    }
-    function canvasToTexture(c, {srgb=false}={}) {
-      const t = new THREE.CanvasTexture(c);
-      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
-      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      t.anisotropy = 12;
-      t.needsUpdate = true;
-      return t;
-    }
+    const backMat = new THREE.MeshPhysicalMaterial({
+      map: backTex,
+      roughness: 0.55,
+      metalness: 0.0,
+      clearcoat: 0.10,
+      clearcoatRoughness: 0.28
+    });
 
-    // ===== auto height + auto mask (same logic) =====
-    function makeAutoHeight(srcCanvas) {
-      const c0 = scaleCanvasMax(srcCanvas, 2048);
-      const w = c0.width, h = c0.height;
-      const ctx = c0.getContext('2d', { willReadFrequently:true });
-      const img = ctx.getImageData(0,0,w,h);
-      const d = img.data;
+    // Build front and back as two planes separated slightly
+    const card = new THREE.Group();
+    const frontMesh = new THREE.Mesh(geom, frontMat);
+    const backMesh  = new THREE.Mesh(backGeom, backMat);
 
-      const L = new Float32Array(w*h);
-      const S = new Float32Array(w*h);
-      for (let i=0,p=0;i<L.length;i++,p+=4){
-        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
-        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-        L[i]=0.2126*r + 0.7152*g + 0.0722*b;
-        S[i]=(mx<=1e-5)?0:((mx-mn)/mx);
-      }
+    frontMesh.position.z = 0.002;
+    backMesh.position.z  = -0.002;
+    backMesh.rotation.y = Math.PI; // correct orientation of back texture
 
-      function blurSeparable(src, rad){
-        const tmp = new Float32Array(w*h);
-        const out = new Float32Array(w*h);
-        for (let y=0;y<h;y++){
-          let sum=0; const row=y*w;
-          for(let x=-rad;x<=rad;x++){ const xx=Math.max(0,Math.min(w-1,x)); sum += src[row+xx]; }
-          for(let x=0;x<w;x++){
-            out[row+x]=sum/(rad*2+1);
-            const x0=x-rad, x1=x+rad+1;
-            const a=src[row+Math.max(0,Math.min(w-1,x0))];
-            const b=src[row+Math.max(0,Math.min(w-1,x1))];
-            sum += b-a;
-          }
-        }
-        for (let x=0;x<w;x++){
-          let sum=0;
-          for(let y=-rad;y<=rad;y++){ const yy=Math.max(0,Math.min(h-1,y)); sum += out[yy*w+x]; }
-          for(let y=0;y<h;y++){
-            tmp[y*w+x]=sum/(rad*2+1);
-            const y0=y-rad, y1=y+rad+1;
-            const a=out[Math.max(0,Math.min(h-1,y0))*w+x];
-            const b=out[Math.max(0,Math.min(h-1,y1))*w+x];
-            sum += b-a;
-          }
-        }
-        return tmp;
-      }
+    card.add(frontMesh);
+    card.add(backMesh);
 
-      const broad = blurSeparable(L, 6);
-      const mid   = blurSeparable(L, 2);
+    // slight tilt at load so it looks real
+    card.rotation.x = -0.08;
+    card.rotation.y = 0.28;
+    scene.add(card);
 
-      const edge = new Float32Array(w*h);
-      for (let y=1;y<h-1;y++){
-        for (let x=1;x<w-1;x++){
-          const i=y*w+x;
-          const gx = mid[i+1] - mid[i-1];
-          const gy = mid[i+w] - mid[i-w];
-          edge[i] = Math.min(1, Math.sqrt(gx*gx + gy*gy) * 2.0);
-        }
-      }
+    // ---------- Holo shader injection (reactive, not gliding) ----------
+    function applyHoloShader(material) {
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uHoloOn = { value: 1.0 };
+        shader.uniforms.uHoloStrength = { value: parseFloat($('holoStrength').value) };
+        shader.uniforms.uHoloReact = { value: parseFloat($('holoReact').value) };
+        shader.uniforms.uMaskTex = { value: maskTex };
+        shader.uniforms.uHasMask = { value: maskTex ? 1.0 : 0.0 };
 
-      function fract(x){ return x - Math.floor(x); }
-      function hash(n){ return fract(Math.sin(n)*43758.5453123); }
-      function h2(x,y){ return hash(x*127.1 + y*311.7); }
-      function noise(x,y){
-        const ix = Math.floor(x), iy = Math.floor(y);
-        const fx = x - ix, fy = y - iy;
-        const a = h2(ix,iy), b = h2(ix+1,iy), c = h2(ix,iy+1), d0 = h2(ix+1,iy+1);
-        const ux = fx*fx*(3-2*fx), uy = fy*fy*(3-2*fy);
-        return a*(1-ux)*(1-uy) + b*ux*(1-uy) + c*(1-ux)*uy + d0*ux*uy;
-      }
-      function fbm(x,y){
-        let v=0, a=0.5, f=1.0;
-        for(let k=0;k<5;k++){ v += a*noise(x*f,y*f); f*=2.02; a*=0.52; }
-        return v;
-      }
+        // Anchor a wavy foil pattern to UVs. Make it view-reactive via (N·V) not time.
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <common>',
+          `#include <common>
+           uniform float uHoloOn;
+           uniform float uHoloStrength;
+           uniform float uHoloReact;
+           uniform sampler2D uMaskTex;
+           uniform float uHasMask;
 
-      const out = document.createElement('canvas');
-      out.width=w; out.height=h;
-      const octx = out.getContext('2d', { willReadFrequently:true });
-      const outImg = octx.createImageData(w,h);
-      const od = outImg.data;
+           float hash21(vec2 p){
+             p = fract(p*vec2(123.34, 456.21));
+             p += dot(p, p+45.32);
+             return fract(p.x*p.y);
+           }
 
-      let seed = 0;
-      for (let i=0;i<Math.min(4000, L.length); i+=37) seed += L[i]*997.0 + S[i]*331.0;
-      seed = seed % 1000;
-
-      for(let y=0;y<h;y++){
-        for(let x=0;x<w;x++){
-          const i=y*w+x;
-          const b = broad[i], e = edge[i], sat = S[i];
-          const wx = (b - 0.5) * 2.2;
-          const wy = (mid[i] - 0.5) * 2.2;
-          const xx = (x / w) * 6.0 + wx + seed*0.001;
-          const yy = (y / h) * 6.0 + wy - seed*0.001;
-          const detail = fbm(xx, yy);
-          const grain  = fbm(xx*8.0, yy*8.0);
-
-          let v = 0.62*b + 0.22*e + 0.16*(detail - 0.5);
-          v += (grain - 0.5) * (0.08 + 0.18*(1.0 - sat));
-
-          v = (v - 0.35) * 1.55 + 0.35; // less aggressive than before
-          v = Math.max(0, Math.min(1, v));
-
-          const g = Math.round(v*255);
-          const p=i*4;
-          od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
-        }
-      }
-      octx.putImageData(outImg,0,0);
-      return out;
-    }
-
-    function makeAutoMask(srcCanvas){
-      const c0 = scaleCanvasMax(srcCanvas, 768);
-      const w = c0.width, h = c0.height;
-      const ctx = c0.getContext('2d', { willReadFrequently:true });
-      const img = ctx.getImageData(0,0,w,h);
-      const d = img.data;
-
-      const lum = new Float32Array(w*h);
-      const sat = new Float32Array(w*h);
-      for (let i=0,p=0;i<lum.length;i++,p+=4){
-        const r=d[p]/255, g=d[p+1]/255, b=d[p+2]/255;
-        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-        lum[i]=0.2126*r + 0.7152*g + 0.0722*b;
-        sat[i]=(mx<=1e-5)?0:((mx-mn)/mx);
-      }
-
-      function blurSeparable(src, rad){
-        const tmp = new Float32Array(w*h);
-        const out = new Float32Array(w*h);
-        for (let y=0;y<h;y++){
-          let sum=0; const row=y*w;
-          for(let x=-rad;x<=rad;x++){ const xx=Math.max(0,Math.min(w-1,x)); sum += src[row+xx]; }
-          for(let x=0;x<w;x++){
-            out[row+x]=sum/(rad*2+1);
-            const x0=x-rad, x1=x+rad+1;
-            const a=src[row+Math.max(0,Math.min(w-1,x0))];
-            const b=src[row+Math.max(0,Math.min(w-1,x1))];
-            sum += b-a;
-          }
-        }
-        for (let x=0;x<w;x++){
-          let sum=0;
-          for(let y=-rad;y<=rad;y++){ const yy=Math.max(0,Math.min(h-1,y)); sum += out[yy*w+x]; }
-          for(let y=0;y<h;y++){
-            tmp[y*w+x]=sum/(rad*2+1);
-            const y0=y-rad, y1=y+rad+1;
-            const a=out[Math.max(0,Math.min(h-1,y0))*w+x];
-            const b=out[Math.max(0,Math.min(h-1,y1))*w+x];
-            sum += b-a;
-          }
-        }
-        return tmp;
-      }
-
-      const bl = blurSeparable(lum, 2);
-      const edge = new Float32Array(w*h);
-      for (let y=1;y<h-1;y++){
-        for (let x=1;x<w-1;x++){
-          const i=y*w+x;
-          const gx = bl[i+1]-bl[i-1];
-          const gy = bl[i+w]-bl[i-w];
-          edge[i]=Math.min(1, Math.sqrt(gx*gx+gy*gy)*2.2);
-        }
-      }
-
-      const score = new Float32Array(w*h);
-      for (let y=0;y<h;y++){
-        for (let x=0;x<w;x++){
-          const i=y*w+x;
-          const u = x/(w-1), v = y/(h-1);
-          const cx = u-0.5, cy = v-0.45;
-          const center = Math.exp(-(cx*cx*2.0 + cy*cy*3.0));
-          score[i] = center * (0.70*edge[i] + 0.30*sat[i]);
-        }
-      }
-
-      const sample = [];
-      for (let i=0;i<score.length;i+=7) sample.push(score[i]);
-      sample.sort((a,b)=>a-b);
-      const thr = sample[Math.floor(sample.length*0.75)] ?? 0.25;
-
-      const mask = new Float32Array(w*h);
-      for (let i=0;i<mask.length;i++){
-        let m = (score[i] > thr) ? 1.0 : 0.0;
-        m = Math.max(m, edge[i]*0.65);
-        mask[i]=m;
-      }
-
-      const mBlur = blurSeparable(mask, 6);
-      let mn=1e9,mx=-1e9;
-      for (let i=0;i<mBlur.length;i++){ mn=Math.min(mn,mBlur[i]); mx=Math.max(mx,mBlur[i]); }
-
-      const out = document.createElement('canvas');
-      out.width=w; out.height=h;
-      const octx = out.getContext('2d', { willReadFrequently:true });
-      const outImg = octx.createImageData(w,h);
-      const od = outImg.data;
-
-      for(let i=0;i<mBlur.length;i++){
-        let v = (mBlur[i]-mn)/Math.max(1e-6,(mx-mn));
-        v = Math.pow(Math.max(0,Math.min(1,v)), 0.75);
-        const g = Math.round(v*255);
-        const p=i*4;
-        od[p]=od[p+1]=od[p+2]=g; od[p+3]=255;
-      }
-      octx.putImageData(outImg,0,0);
-      return out;
-    }
-
-    // ===== shading constants =====
-    const CORNER = 0.044;
-
-    // Keep base readable (no crush/blowout)
-    const BASE_GAIN = 1.18;     // mild lift
-    const BASE_GAMMA = 0.92;    // keep midtones stable
-
-    // Emboss: normal-only, subtle, spec-driven (won't smear text)
-    const EMBOSS_N = 0.55;      // normal perturb strength
-    const EMBOSS_SPEC = 0.55;   // how much emboss affects spec only
-
-    // Holo: reflection-based, no gliding, anchored to surface
-    const HOLO_STRENGTH = 1.35; // overall
-    const HOLO_SAT = 0.85;      // colorfulness
-    const HOLO_WAVY = 0.22;     // surface micro warping (anchored)
-    const HOLO_SPARKLE = 0.16;  // tiny grain
-    const HOLO_SPEC = 0.95;     // extra sparkle spec
-    const HOLO_MASK_PROTECT = 1.0; // subject protection (1 = on)
-
-    const roundedRectGLSL = `
-      float roundedMask(vec2 uv, float r){
-        vec2 p = uv * 2.0 - 1.0;
-        float rx = r * 2.0;
-        vec2 q = abs(p) - (vec2(1.0) - vec2(rx));
-        float outside = length(max(q, 0.0)) - rx;
-        return 1.0 - step(0.0, outside);
-      }
-    `;
-
-    const uniforms = {
-      uFront: { value: null },
-      uBack:  { value: null },
-      uHeight:{ value: null },
-      uMask:  { value: null },
-      uHasHeight:{ value: 0.0 },
-      uHasMask:  { value: 0.0 },
-      uUseHolo:   { value: 1.0 },
-      uUseEmboss: { value: 1.0 },
-      uUseMask:   { value: 1.0 },
-      uCorner: { value: CORNER },
-      uTime:   { value: 0.0 },
-      uLightDir: { value: new THREE.Vector3(0.35, 0.85, 0.45).normalize() }
-    };
-
-    const cardVS = `
-      varying vec2 vUv;
-      varying vec3 vN;
-      varying vec3 vV;
-      void main(){
-        vUv = uv;
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vN = normalize(mat3(modelMatrix) * normal);
-        vV = normalize(cameraPosition - wp.xyz);
-        gl_Position = projectionMatrix * viewMatrix * wp;
-      }
-    `;
-
-    const frontFS = `
-      precision highp float;
-      varying vec2 vUv;
-      varying vec3 vN;
-      varying vec3 vV;
-
-      uniform sampler2D uFront;
-      uniform sampler2D uHeight;
-      uniform sampler2D uMask;
-
-      uniform float uHasHeight;
-      uniform float uHasMask;
-      uniform float uUseHolo;
-      uniform float uUseEmboss;
-      uniform float uUseMask;
-
-      uniform float uCorner;
-      uniform float uTime;
-      uniform vec3  uLightDir;
-
-      ${roundedRectGLSL}
-
-      float fractf(float x){ return x - floor(x); }
-      float hash(vec2 p){ return fractf(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-      float noise(vec2 p){
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        float a = hash(i);
-        float b = hash(i + vec2(1.0, 0.0));
-        float c = hash(i + vec2(0.0, 1.0));
-        float d = hash(i + vec2(1.0, 1.0));
-        vec2 u = f*f*(3.0 - 2.0*f);
-        return mix(a, b, u.x) + (c - a)*u.y*(1.0 - u.x) + (d - b)*u.x*u.y;
-      }
-
-      // energy-safe "screen" blend (prevents blowout vs add)
-      vec3 screenBlend(vec3 base, vec3 top, float a){
-        top = clamp(top, 0.0, 1.0);
-        vec3 scr = 1.0 - (1.0 - base) * (1.0 - top);
-        return mix(base, scr, clamp(a, 0.0, 1.0));
-      }
-
-      vec3 rainbow(float t){
-        vec3 c = vec3(
-          sin(6.2831*(t + 0.00))*0.5+0.5,
-          sin(6.2831*(t + 0.33))*0.5+0.5,
-          sin(6.2831*(t + 0.66))*0.5+0.5
+           // spectral-ish rainbow from scalar
+           vec3 spectral(float t){
+             t = fract(t);
+             vec3 c = clamp(abs(fract(t + vec3(0.0, 0.33, 0.67))*2.0 - 1.0), 0.0, 1.0);
+             // soften to look less "neon"
+             c = pow(c, vec3(1.35));
+             return c;
+           }
+          `
         );
-        // soften saturation
-        float g = dot(c, vec3(0.3333));
-        return mix(vec3(g), c, ${HOLO_SAT.toFixed(3)});
-      }
 
-      void main(){
-        float inside = roundedMask(vUv, uCorner);
-        if(inside < 0.5) discard;
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <lights_fragment_begin>',
+          `
+          #include <lights_fragment_begin>
 
-        // Base artwork: keep readable
-        vec3 base = texture2D(uFront, vUv).rgb;
-        base = pow(base, vec3(${BASE_GAMMA.toFixed(3)}));
-        base *= ${BASE_GAIN.toFixed(3)};
-        base = clamp(base, 0.0, 1.0);
+          // ---- Holofoil (front only) ----
+          // We ADD a controlled iridescent component to specular, not multiply base color.
+          if (uHoloOn > 0.5) {
+            // View direction and normal are available in physical shader via geometryNormal/normal
+            // "dotNV" changes 1:1 with tilt; multiply by reactivity.
+            float dotNV = clamp(dot(geometryNormal, geometryViewDir), 0.0, 1.0);
 
-        // Height + gradients (for emboss normals only)
-        float h = 0.5;
-        vec2 grad = vec2(0.0);
-        if(uHasHeight > 0.5){
-          h = texture2D(uHeight, vUv).r;
-          vec2 e = vec2(1.0/768.0, 1.0/768.0);
-          float hc = h;
-          float hx = texture2D(uHeight, vUv + vec2(e.x, 0.0)).r;
-          float hy = texture2D(uHeight, vUv + vec2(0.0, e.y)).r;
-          grad = vec2(hx - hc, hy - hc);
-        }
+            // Wavy pattern anchored to UVs (no time sweep):
+            vec2 uv = vUv;
+            float wave =
+              sin((uv.y*9.0 + sin(uv.x*7.0))*6.2831) * 0.35 +
+              sin((uv.x*5.0 - uv.y*3.0)*6.2831) * 0.20 +
+              sin((uv.x*21.0 + uv.y*13.0)*6.2831) * 0.10;
 
-        // Mask: 1 = Pokémon/foreground
-        float m = 0.0;
-        if(uHasMask > 0.5 && uUseMask > 0.5){
-          m = texture2D(uMask, vUv).r;
-        }
+            // Fine grain: stable noise
+            float grain = (hash21(uv*vec2(1200.0, 900.0)) - 0.5) * 0.08;
 
-        vec3 N = normalize(vN);
-        vec3 V = normalize(vV);
-        vec3 L = normalize(uLightDir);
+            // Angle drives color shift; wave makes it "foil wavy"
+            float t = (1.0 - dotNV) * uHoloReact + wave + grain;
 
-        // ✅ Emboss: subtle normal perturb ONLY (no UV shift)
-        if(uUseEmboss > 0.5 && uHasHeight > 0.5){
-          N = normalize(N + vec3(-grad.x, -grad.y, 0.0) * ${EMBOSS_N.toFixed(3)});
-        }
+            // Holo color (spectral-ish), softened
+            vec3 holo = spectral(t);
 
-        // basic shading (gentle)
-        float ndl = clamp(dot(N, L), 0.0, 1.0);
-        vec3 lit = base * (0.60 + 0.55*ndl);
+            // Mask: 1 = protect subject (less holo), 0 = background (more holo)
+            float protect = 0.0;
+            if (uHasMask > 0.5) {
+              protect = texture2D(uMaskTex, uv).r; // grayscale
+            }
 
-        // specular (where emboss should show)
-        vec3 H = normalize(L + V);
-        float spec = pow(max(dot(N, H), 0.0), 80.0);
-        lit += vec3(spec) * (0.12 + ${EMBOSS_SPEC.toFixed(3)} * (uUseEmboss>0.5?1.0:0.0)) * 0.45;
+            // Fresnel-ish: stronger at grazing, weaker head-on
+            float fres = pow(1.0 - dotNV, 2.2);
 
-        // ✅ Holo: reflection-based (no gliding across UV)
-        if(uUseHolo > 0.5){
-          float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.2);
-          vec3 R = reflect(-V, N);
+            // Control contrast: keep holo from blowing highlights by clamping energy
+            // Also reduce holo on protected subject
+            float holoAmt = uHoloStrength * fres * (1.0 - 0.85*protect);
+            holoAmt = clamp(holoAmt, 0.0, 1.15);
 
-          // anchored micro-wavy structure based on UV (doesn't slide with tilt)
-          float w = noise(vUv*10.0 + vec2(0.0, uTime*0.02));
-          float w2 = noise(vUv*24.0 + vec2(uTime*0.015, 0.0));
-          float micro = (w - 0.5) * ${HOLO_WAVY.toFixed(3)} + (w2 - 0.5) * ${HOLO_WAVY.toFixed(3)} * 0.35;
-
-          // hue depends on reflection direction (this is the "real" angle response)
-          float hue = atan(R.x, R.z) * 0.20 + atan(R.y, R.z) * 0.16 + micro;
-
-          // sparkle grain (tiny, anchored)
-          float g = noise(vUv*320.0 + uTime*0.05);
-          float sparkle = (g - 0.5) * ${HOLO_SPARKLE.toFixed(3)};
-
-          // protect subject from holo (mask = 1 on Pokémon)
-          float protect = 1.0;
-          if(uHasMask > 0.5 && uUseMask > 0.5){
-            protect = 1.0 - clamp(m * ${HOLO_MASK_PROTECT.toFixed(1)}, 0.0, 1.0);
+            // Apply holo primarily to specular-like contribution:
+            // We add to outgoingLight with a gentle gain, not destroying albedo.
+            outgoingLight += holo * holoAmt * 0.55;
           }
+          `
+        );
 
-          // holo amount depends on fresnel + angle to light (reflectance)
-          float rdl = clamp(dot(R, L)*0.5 + 0.5, 0.0, 1.0);
-          float holoAmt = ${HOLO_STRENGTH.toFixed(3)} * (0.10 + 0.85*fres) * (0.35 + 0.65*rdl) * protect;
+        material.userData.shader = shader;
+      };
 
-          vec3 holoCol = rainbow(hue + sparkle);
-
-          // energy-safe blend so highlights don't blow out
-          lit = screenBlend(lit, holoCol, holoAmt);
-
-          // a bit of extra sparkle spec, still protected
-          float spec2 = pow(max(dot(R, L), 0.0), 18.0) * ${HOLO_SPEC.toFixed(3)} * protect;
-          lit += vec3(spec2) * (0.08 + 0.55*fres);
-        }
-
-        // final gentle compression to avoid harsh contrast
-        lit = clamp(lit, 0.0, 1.0);
-        lit = lit / (lit + vec3(0.18)); // soft roll-off (Reinhard-ish)
-        lit = clamp(lit, 0.0, 1.0);
-
-        gl_FragColor = vec4(lit, 1.0);
-      }
-    `;
-
-    const backFS = `
-      precision highp float;
-      varying vec2 vUv;
-      uniform sampler2D uBack;
-      uniform float uCorner;
-      ${roundedRectGLSL}
-      void main(){
-        float inside = roundedMask(vUv, uCorner);
-        if(inside < 0.5) discard;
-        vec3 base = texture2D(uBack, vUv).rgb;
-        base = pow(base, vec3(${BASE_GAMMA.toFixed(3)}));
-        base *= ${BASE_GAIN.toFixed(3)};
-        base = clamp(base, 0.0, 1.0);
-        base = base / (base + vec3(0.18));
-        gl_FragColor = vec4(base, 1.0);
-      }
-    `;
-
-    const frontMat = new THREE.ShaderMaterial({
-      uniforms, transparent:true, side:THREE.FrontSide,
-      vertexShader: cardVS,
-      fragmentShader: frontFS
-    });
-
-    const backMat = new THREE.ShaderMaterial({
-      uniforms, transparent:true, side:THREE.FrontSide,
-      vertexShader: `varying vec2 vUv; void main(){ vUv=vec2(1.0-uv.x, uv.y); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-      fragmentShader: backFS
-    });
-
-    // mesh
-    const CORNER_UV = 0.044;
-    uniforms.uCorner.value = CORNER_UV;
-
-    const W=1.0, H=W*(88/63);
-    const geo = new THREE.PlaneGeometry(W, H, 1, 1);
-    const group = new THREE.Group();
-    const front = new THREE.Mesh(geo, frontMat); front.position.z = 0.003;
-    const back  = new THREE.Mesh(geo, backMat);  back.rotation.y = Math.PI; back.position.z = -0.003;
-    group.add(front, back);
-    group.rotation.x = -0.04;
-    scene.add(group);
-
-    // load textures
-    const loader = new THREE.TextureLoader();
-    function loadTex(url){
-      return new Promise((resolve,reject)=>{
-        loader.load(url, (t)=>{
-          t.colorSpace = THREE.SRGBColorSpace;
-          t.anisotropy = 12;
-          t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-          resolve(t);
-        }, undefined, ()=>reject(new Error('Failed to load: ' + url)));
-      });
-    }
-    async function setFrontFromCanvas(c){ uniforms.uFront.value = canvasToTexture(c, {srgb:true}); }
-    async function setHeightFromCanvas(c){ uniforms.uHeight.value = canvasToTexture(c, {srgb:false}); uniforms.uHasHeight.value = 1.0; }
-    async function setMaskFromCanvas(c){ uniforms.uMask.value = canvasToTexture(c, {srgb:false}); uniforms.uHasMask.value = 1.0; }
-    function clearHeight(){ uniforms.uHeight.value=null; uniforms.uHasHeight.value=0.0; }
-    function clearMask(){ uniforms.uMask.value=null; uniforms.uHasMask.value=0.0; }
-
-    async function regenAutoFromFront(frontCanvas){
-      const hasUserHeight = ui.heightFile.files?.length;
-      const hasUserMask = ui.maskFile.files?.length;
-
-      if(ui.useAutoHeight.checked && !hasUserHeight){
-        status('Generating height…');
-        await setHeightFromCanvas(makeAutoHeight(frontCanvas));
-        log('✓ Auto height generated');
-      } else if(!hasUserHeight && !ui.useAutoHeight.checked){
-        clearHeight();
-        log('ℹ Auto-height off (no height)');
-      }
-
-      if(ui.useAutoMask.checked && !hasUserMask){
-        status('Generating mask…');
-        await setMaskFromCanvas(makeAutoMask(frontCanvas));
-        log('✓ Auto mask generated');
-      } else if(!hasUserMask && !ui.useAutoMask.checked){
-        clearMask();
-        log('ℹ Auto-mask off (no mask)');
-      }
-
-      status('Ready');
+      material.needsUpdate = true;
     }
 
-    async function loadPreset(which){
-      status('Loading…');
-      logEl.textContent = '';
-      try{
-        const frontPath = PRESETS[which];
-        const [frontT, backT] = await Promise.all([ loadTex(frontPath), loadTex(PATH_BACK) ]);
-        uniforms.uFront.value = frontT;
-        uniforms.uBack.value  = backT;
+    applyHoloShader(frontMat);
 
-        log('✓ Loaded: ' + frontPath);
-        log('✓ Loaded: ' + PATH_BACK);
+    // ---------- Emboss (legible) ----------
+    // Emboss should be mostly normal/roughness variation, not color distortion.
+    function applyEmboss(normalTex, strength) {
+      frontMat.normalMap = normalTex;
+      frontMat.normalScale = new THREE.Vector2(0.55, 0.55).multiplyScalar(strength * 0.55);
+      // keep readable: don’t over-sharpen highlights
+      frontMat.roughness = 0.42;
+      frontMat.clearcoat = 0.28;
+      frontMat.clearcoatRoughness = 0.22;
+      frontMat.needsUpdate = true;
+    }
 
-        const src = await loadImageToCanvas(frontPath);
-        await regenAutoFromFront(scaleCanvasMax(src, 2048));
-      }catch(e){
-        log('✗ ' + (e.message || e));
-        status('Error');
+    function clearEmboss() {
+      frontMat.normalMap = null;
+      frontMat.needsUpdate = true;
+    }
+
+    // ---------- Load preset assets ----------
+    const PRESETS = {
+      ray: {
+        name: "Mega Rayquaza",
+        front: "./assets/presets/mega-rayquaza-front.JPG"
+      },
+      blast: {
+        name: "Mega Blastoise",
+        front: "./assets/presets/mega-blastoise-front.JPG"
+      }
+    };
+
+    const BACK_PATH = "./assets/pokemon-back.jpg";
+
+    async function loadAllFromPreset(presetKey) {
+      setStatus("Loading…");
+      logLine(`Preset: ${presetKey}`);
+
+      // Always load back from assets root
+      const backBmp = await loadImageBitmapFromUrl(BACK_PATH);
+      backTex.dispose?.();
+      backTex = bitmapToTexture(backBmp, { srgb: true });
+      backMat.map = backTex;
+      backMat.needsUpdate = true;
+      logLine(`✓ Loaded: ${BACK_PATH}`);
+
+      // Front
+      const frontUrl = PRESETS[presetKey].front;
+      const frontBmp = await loadImageBitmapFromUrl(frontUrl);
+      frontTex.dispose?.();
+      frontTex = bitmapToTexture(frontBmp, { srgb: true });
+      frontMat.map = frontTex;
+      frontMat.needsUpdate = true;
+      logLine(`✓ Loaded: ${frontUrl}`);
+
+      // Height
+      let heightImg;
+      if ($('autoHeightOn').checked) {
+        heightImg = buildAutoHeightFromFront(frontBmp);
+        logLine(`✓ Auto-height generated`);
+      } else {
+        heightImg = null;
+      }
+
+      // Mask
+      let maskImg = null;
+      if ($('autoMaskOn').checked) {
+        maskImg = buildAutoMaskFromFront(frontBmp);
+        logLine(`✓ Auto-mask generated`);
+      }
+
+      // push to textures
+      if (maskImg) {
+        maskTex?.dispose?.();
+        maskTex = imageDataToTexture(maskImg, { srgb: false });
+      } else {
+        maskTex?.dispose?.();
+        maskTex = null;
+      }
+
+      // Update shader uniforms (if compiled)
+      if (frontMat.userData.shader) {
+        frontMat.userData.shader.uniforms.uMaskTex.value = maskTex;
+        frontMat.userData.shader.uniforms.uHasMask.value = maskTex ? 1.0 : 0.0;
+      }
+
+      // Emboss normal map
+      if ($('embossOn').checked && heightImg) {
+        const strength = parseFloat($('embossStrength').value);
+        const normalImg = heightToNormalMap(heightImg, 1.15 + strength * 0.75);
+        const normalTex = imageDataToTexture(normalImg, { srgb: false });
+        applyEmboss(normalTex, strength);
+      } else {
+        clearEmboss();
+      }
+
+      // Ensure holo toggle is reflected
+      if (frontMat.userData.shader) {
+        frontMat.userData.shader.uniforms.uHoloOn.value = $('holoOn').checked ? 1.0 : 0.0;
+        frontMat.userData.shader.uniforms.uHoloStrength.value = parseFloat($('holoStrength').value);
+        frontMat.userData.shader.uniforms.uHoloReact.value = parseFloat($('holoReact').value);
+      }
+
+      setStatus("Ready");
+    }
+
+    // ---------- Upload handlers ----------
+    async function loadFrontFromUpload(file) {
+      const bmp = await loadImageBitmapFromFile(file);
+      frontTex.dispose?.();
+      frontTex = bitmapToTexture(bmp, { srgb: true });
+      frontMat.map = frontTex;
+      frontMat.needsUpdate = true;
+      logLine(`✓ Loaded front upload: ${file.name}`);
+
+      // regenerate height/mask if toggles enabled (unless user supplies them)
+      if ($('autoHeightOn').checked) {
+        const h = buildAutoHeightFromFront(bmp);
+        const strength = parseFloat($('embossStrength').value);
+        if ($('embossOn').checked) {
+          const n = heightToNormalMap(h, 1.15 + strength * 0.75);
+          const nt = imageDataToTexture(n, { srgb: false });
+          applyEmboss(nt, strength);
+        }
+        logLine(`✓ Auto-height generated (upload)`);
+      }
+
+      if ($('autoMaskOn').checked) {
+        const m = buildAutoMaskFromFront(bmp);
+        maskTex?.dispose?.();
+        maskTex = imageDataToTexture(m, { srgb: false });
+        if (frontMat.userData.shader) {
+          frontMat.userData.shader.uniforms.uMaskTex.value = maskTex;
+          frontMat.userData.shader.uniforms.uHasMask.value = 1.0;
+        }
+        logLine(`✓ Auto-mask generated (upload)`);
       }
     }
 
-    // ui handlers
-    ui.preset.addEventListener('change', ()=> loadPreset(ui.preset.value));
-    ui.reload.onclick = ()=> loadPreset(ui.preset.value);
+    async function loadHeightFromUpload(file) {
+      const bmp = await loadImageBitmapFromFile(file);
+      const img = getImageDataFromBitmap(bmp);
 
-    ui.useHolo.addEventListener('change', ()=> uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0);
-    ui.useEmboss.addEventListener('change', ()=> uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0);
-    ui.useAutoMask.addEventListener('change', ()=> uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0);
+      if ($('embossOn').checked) {
+        const strength = parseFloat($('embossStrength').value);
+        const normalImg = heightToNormalMap(img, 1.15 + strength * 0.75);
+        const normalTex = imageDataToTexture(normalImg, { srgb: false });
+        applyEmboss(normalTex, strength);
+        logLine(`✓ Loaded height map: ${file.name} (emboss applied)`);
+      } else {
+        logLine(`✓ Loaded height map: ${file.name} (emboss currently off)`);
+      }
+    }
 
-    ui.useAutoHeight.addEventListener('change', async ()=>{
-      if(ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
-        try{
-          status('Generating height…');
-          const src = ui.frontFile.files?.length ? await loadImageToCanvas(ui.frontFile.files[0]) : await loadImageToCanvas(PRESETS[ui.preset.value]);
-          await setHeightFromCanvas(makeAutoHeight(scaleCanvasMax(src, 2048)));
-          log('✓ Auto height generated');
-          status('Ready');
-        }catch(e){
-          log('✗ Auto height failed: ' + (e.message||e));
-          status('Error');
-        }
-      }
-      if(!ui.useAutoHeight.checked && !(ui.heightFile.files?.length)){
-        clearHeight();
-        log('ℹ Auto-height off (no height)');
-      }
-    });
+    async function loadMaskFromUpload(file) {
+      const bmp = await loadImageBitmapFromFile(file);
+      const img = getImageDataFromBitmap(bmp);
+      // assume user provides grayscale where white = subject (protected)
+      maskTex?.dispose?.();
+      maskTex = imageDataToTexture(img, { srgb: false });
 
-    ui.useAutoMask.addEventListener('change', async ()=>{
-      uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0;
-      if(ui.useAutoMask.checked && !(ui.maskFile.files?.length)){
-        try{
-          status('Generating mask…');
-          const src = ui.frontFile.files?.length ? await loadImageToCanvas(ui.frontFile.files[0]) : await loadImageToCanvas(PRESETS[ui.preset.value]);
-          await setMaskFromCanvas(makeAutoMask(src));
-          log('✓ Auto mask generated');
-          status('Ready');
-        }catch(e){
-          log('✗ Auto mask failed: ' + (e.message||e));
-          status('Error');
-        }
+      if (frontMat.userData.shader) {
+        frontMat.userData.shader.uniforms.uMaskTex.value = maskTex;
+        frontMat.userData.shader.uniforms.uHasMask.value = 1.0;
       }
-      if(!ui.useAutoMask.checked && !(ui.maskFile.files?.length)){
-        clearMask();
-        log('ℹ Auto-mask off (no mask)');
-      }
-    });
+      logLine(`✓ Loaded mask: ${file.name}`);
+    }
 
-    ui.frontFile.addEventListener('change', async (e)=>{
-      const file = e.target.files?.[0];
-      if(!file) return;
-      status('Loading front…');
-      try{
-        const src = await loadImageToCanvas(file);
-        await setFrontFromCanvas(src);
-        log('✓ Loaded front upload: ' + file.name);
-        await regenAutoFromFront(scaleCanvasMax(src, 2048));
-      }catch(err){
-        log('✗ Front upload failed: ' + (err.message||err));
-        status('Error');
-      }
-    });
+    // ---------- UI wiring ----------
+    $('toggleLog').onclick = () => {
+      logEl.style.display = (logEl.style.display === 'none' || !logEl.style.display) ? 'block' : 'none';
+    };
 
-    ui.heightFile.addEventListener('change', async (e)=>{
-      const file = e.target.files?.[0];
-      if(!file) return;
-      status('Loading height…');
-      try{
-        const c = await loadImageToCanvas(file);
-        await setHeightFromCanvas(scaleCanvasMax(c, 2048));
-        log('✓ Loaded height upload: ' + file.name);
-        status('Ready');
-      }catch(err){
-        log('✗ Height upload failed: ' + (err.message||err));
-        status('Error');
-      }
-    });
+    $('resetView').onclick = () => {
+      camera.position.set(0, 0.08, 3.15);
+      controls.target.set(0, 0, 0);
+      card.rotation.set(-0.08, 0.28, 0);
+      controls.update();
+      logLine("✓ Reset view");
+    };
 
-    ui.maskFile.addEventListener('change', async (e)=>{
-      const file = e.target.files?.[0];
-      if(!file) return;
-      status('Loading mask…');
-      try{
-        const c = await loadImageToCanvas(file);
-        await setMaskFromCanvas(scaleCanvasMax(c, 1024));
-        log('✓ Loaded mask upload: ' + file.name);
-        status('Ready');
-      }catch(err){
-        log('✗ Mask upload failed: ' + (err.message||err));
-        status('Error');
-      }
-    });
+    $('reload').onclick = async () => {
+      logLine("--- Reload ---");
+      await loadAllFromPreset($('preset').value);
+    };
 
-    window.addEventListener('resize', ()=>{
+    $('preset').onchange = async () => loadAllFromPreset($('preset').value);
+
+    $('frontFile').onchange = async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      await loadFrontFromUpload(f);
+    };
+
+    $('heightFile').onchange = async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      await loadHeightFromUpload(f);
+    };
+
+    $('maskFile').onchange = async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      await loadMaskFromUpload(f);
+    };
+
+    function syncVals(){
+      $('holoStrengthVal').textContent = parseFloat($('holoStrength').value).toFixed(2);
+      $('holoReactVal').textContent = parseFloat($('holoReact').value).toFixed(2);
+      $('embossStrengthVal').textContent = parseFloat($('embossStrength').value).toFixed(2);
+    }
+    syncVals();
+
+    $('holoOn').onchange = () => {
+      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uHoloOn.value = $('holoOn').checked ? 1.0 : 0.0;
+    };
+
+    $('embossOn').onchange = async () => {
+      // easiest: just reload preset to re-derive height/normal cleanly
+      await loadAllFromPreset($('preset').value);
+    };
+
+    $('autoHeightOn').onchange = async () => {
+      await loadAllFromPreset($('preset').value);
+    };
+
+    $('autoMaskOn').onchange = async () => {
+      await loadAllFromPreset($('preset').value);
+    };
+
+    $('holoStrength').oninput = () => {
+      syncVals();
+      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uHoloStrength.value = parseFloat($('holoStrength').value);
+    };
+
+    $('holoReact').oninput = () => {
+      syncVals();
+      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uHoloReact.value = parseFloat($('holoReact').value);
+    };
+
+    $('embossStrength').oninput = async () => {
+      syncVals();
+      // reload to rebuild normal map with updated strength
+      await loadAllFromPreset($('preset').value);
+    };
+
+    // ---------- Resize ----------
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
       camera.aspect = window.innerWidth/window.innerHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    const clock = new THREE.Clock();
-    function animate(){
+    // ---------- Boot ----------
+    (async function boot(){
+      setStatus("Booting…");
+      logLine("Boot…");
+
+      try {
+        await loadAllFromPreset($('preset').value);
+        setStatus("Ready");
+      } catch (err) {
+        setStatus("Error");
+        logLine("❌ " + (err?.message || err));
+      }
+    })();
+
+    // ---------- Render loop ----------
+    function animate() {
       requestAnimationFrame(animate);
-      uniforms.uTime.value = clock.getElapsedTime();
-      updateCamera();
+      controls.update();
+
+      // Keep shader uniforms fresh even if compilation happens later
+      if (frontMat.userData.shader) {
+        frontMat.userData.shader.uniforms.uHoloOn.value = $('holoOn').checked ? 1.0 : 0.0;
+        frontMat.userData.shader.uniforms.uHoloStrength.value = parseFloat($('holoStrength').value);
+        frontMat.userData.shader.uniforms.uHoloReact.value = parseFloat($('holoReact').value);
+        frontMat.userData.shader.uniforms.uMaskTex.value = maskTex;
+        frontMat.userData.shader.uniforms.uHasMask.value = maskTex ? 1.0 : 0.0;
+      }
+
       renderer.render(scene, camera);
     }
     animate();
-
-    uniforms.uUseHolo.value = ui.useHolo.checked ? 1.0 : 0.0;
-    uniforms.uUseEmboss.value = ui.useEmboss.checked ? 1.0 : 0.0;
-    uniforms.uUseMask.value = ui.useAutoMask.checked ? 1.0 : 0.0;
-
-    status('Loading preset…');
-    loadPreset('ray');
   </script>
 </body>
 </html>
