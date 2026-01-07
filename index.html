@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Base)</title>
+  <title>Card Viewer (Base - Stable)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -30,7 +30,6 @@
     }
   </style>
 
-  <!-- Import map so OrbitControls can import "three" -->
   <script type="importmap">
     {
       "imports": {
@@ -45,18 +44,15 @@
   <div id="ui">
     <div id="status">Loading…</div>
 
-    <label>Front image
-      <input id="frontInput" type="file" accept="image/*" />
+    <label>Front image (JPG/PNG)
+      <input id="frontInput" type="file" accept="image/jpeg,image/png" />
     </label>
 
-    <label>Back image
-      <input id="backInput" type="file" accept="image/*" />
+    <label>Back image (JPG/PNG)
+      <input id="backInput" type="file" accept="image/jpeg,image/png" />
     </label>
 
-    <small>
-      Drag to rotate • Scroll to zoom • Right-drag to pan<br/>
-      iPhone tip: large photos auto-downscale to 2048px.
-    </small>
+    <small>Drag to rotate • Scroll to zoom • Right-drag to pan</small>
   </div>
 
   <script type="module">
@@ -66,7 +62,6 @@
     const statusEl = document.getElementById("status");
     const log = (m) => statusEl.textContent = m + "\n" + statusEl.textContent;
 
-    // Show runtime errors on the page (super helpful on iPhone)
     window.addEventListener("error", (e) => log("JS ERROR ❌ " + (e.message || e.error || e)));
     window.addEventListener("unhandledrejection", (e) => log("PROMISE ERROR ❌ " + (e.reason?.message || e.reason || e)));
 
@@ -83,7 +78,7 @@
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     document.body.appendChild(renderer.domElement);
 
-    // Scene + camera
+    // Scene / camera
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(0x0b0f14, 2.5, 10);
 
@@ -103,22 +98,31 @@
     const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
     const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
-    // Card geometry (rounded extrude)
-    const cardWidth = 0.63, cardHeight = 0.88, cornerRadius = 0.045, thickness = 0.02;
+    // Card dimensions
+    const cardWidth = 0.63;
+    const cardHeight = 0.88;
+    const thickness = 0.02;
+    const cornerRadius = 0.045;
 
+    // Rounded rectangle shape (for extrude)
     function roundedRectShape(w, h, r) {
-      const x = -w/2, y = -h/2;
-      const s = new THREE.Shape();
+      const x = -w / 2, y = -h / 2;
+      const shape = new THREE.Shape();
       const rr = Math.min(r, w/2, h/2);
-      s.moveTo(x+rr, y);
-      s.lineTo(x+w-rr, y); s.quadraticCurveTo(x+w, y, x+w, y+rr);
-      s.lineTo(x+w, y+h-rr); s.quadraticCurveTo(x+w, y+h, x+w-rr, y+h);
-      s.lineTo(x+rr, y+h); s.quadraticCurveTo(x, y+h, x, y+h-rr);
-      s.lineTo(x, y+rr); s.quadraticCurveTo(x, y, x+rr, y);
-      return s;
+      shape.moveTo(x + rr, y);
+      shape.lineTo(x + w - rr, y);
+      shape.quadraticCurveTo(x + w, y, x + w, y + rr);
+      shape.lineTo(x + w, y + h - rr);
+      shape.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+      shape.lineTo(x + rr, y + h);
+      shape.quadraticCurveTo(x, y + h, x, y + h - rr);
+      shape.lineTo(x, y + rr);
+      shape.quadraticCurveTo(x, y, x + rr, y);
+      return shape;
     }
 
-    const geom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
+    // 1) Edge/thickness mesh (extruded)
+    const edgeGeom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
       depth: thickness,
       bevelEnabled: true,
       bevelThickness: 0.004,
@@ -126,71 +130,115 @@
       bevelSegments: 3,
       curveSegments: 24
     });
-    geom.translate(0, 0, -thickness/2);
-    geom.computeVertexNormals();
+    edgeGeom.translate(0, 0, -thickness/2);
 
-    // UVs for cap textures
-    geom.computeBoundingBox();
-    const bb = geom.boundingBox;
-    const size = new THREE.Vector3(); bb.getSize(size);
-    const pos = geom.attributes.position;
-    const uv = [];
-    for (let i = 0; i < pos.count; i++) {
-      uv.push((pos.getX(i) - bb.min.x) / size.x, (pos.getY(i) - bb.min.y) / size.y);
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: 0x1b222e,
+      roughness: 0.9,
+      metalness: 0.0
+    });
+
+    const cardGroup = new THREE.Group();
+    scene.add(cardGroup);
+    cardGroup.add(new THREE.Mesh(edgeGeom, edgeMat));
+
+    // 2) Create a rounded-corner alpha mask for the face planes
+    function makeRoundedAlphaMap(size = 512) {
+      const c = document.createElement("canvas");
+      c.width = size; c.height = size;
+      const ctx = c.getContext("2d");
+
+      ctx.clearRect(0, 0, size, size);
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, size, size);
+
+      const r = Math.round((cornerRadius / Math.min(cardWidth, cardHeight)) * (size * 0.5));
+      const inset = 8;
+
+      function roundRect(x, y, w, h, rr) {
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.lineTo(x + w - rr, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+        ctx.lineTo(x + w, y + h - rr);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+        ctx.lineTo(x + rr, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+        ctx.lineTo(x, y + rr);
+        ctx.quadraticCurveTo(x, y, x + rr, y);
+        ctx.closePath();
+      }
+
+      ctx.fillStyle = "white";
+      roundRect(inset, inset, size - inset*2, size - inset*2, r);
+      ctx.fill();
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.NoColorSpace; // alpha is data
+      tex.needsUpdate = true;
+      return tex;
     }
-    geom.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
 
-    // Split into edge/front/back groups
-    geom.clearGroups();
-    const index = geom.index;
-    const normal = geom.attributes.normal;
-    const side=[], front=[], back=[];
-    for (let i=0; i<index.count; i+=3) {
-      const a=index.getX(i), b=index.getX(i+1), c=index.getX(i+2);
-      const nz=(normal.getZ(a)+normal.getZ(b)+normal.getZ(c))/3;
-      if (nz>0.6) front.push(a,b,c);
-      else if (nz<-0.6) back.push(a,b,c);
-      else side.push(a,b,c);
+    const alphaMap = makeRoundedAlphaMap(512);
+
+    // 3) Front/Back planes (textured), slightly offset to avoid z-fighting
+    const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, 1, 1);
+
+    const texLoader = new THREE.TextureLoader();
+    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
+    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
+    for (const t of [defaultFront, defaultBack]) {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.flipY = false;
+      t.anisotropy = 8;
     }
-    const merged = new Uint32Array(side.length+front.length+back.length);
-    merged.set(side,0); merged.set(front,side.length); merged.set(back,side.length+front.length);
-    geom.setIndex(new THREE.BufferAttribute(merged,1));
-    geom.addGroup(0, side.length, 0);
-    geom.addGroup(side.length, front.length, 1);
-    geom.addGroup(side.length+front.length, back.length, 2);
 
-    // Default textures
-    const loader = new THREE.TextureLoader();
-    const defaultFront = loader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
-    const defaultBack  = loader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
-    for (const t of [defaultFront, defaultBack]) { t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; t.anisotropy = 8; }
+    const frontMat = new THREE.MeshStandardMaterial({
+      map: defaultFront,
+      alphaMap,
+      transparent: true,
+      roughness: 0.6,
+      metalness: 0.05
+    });
 
-    const edgeMat  = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.9, metalness: 0.0 });
-    const frontMat = new THREE.MeshStandardMaterial({ map: defaultFront, roughness: 0.6, metalness: 0.05 });
-    const backMat  = new THREE.MeshStandardMaterial({ map: defaultBack,  roughness: 0.6, metalness: 0.05 });
+    const backMat = new THREE.MeshStandardMaterial({
+      map: defaultBack,
+      alphaMap,
+      transparent: true,
+      roughness: 0.6,
+      metalness: 0.05
+    });
 
-    const card = new THREE.Mesh(geom, [edgeMat, frontMat, backMat]);
-    card.rotation.x = -0.08;
-    card.rotation.y = 0.55;
-    scene.add(card);
+    const frontMesh = new THREE.Mesh(faceGeom, frontMat);
+    frontMesh.position.z = thickness/2 + 0.001;
+    cardGroup.add(frontMesh);
+
+    const backMesh = new THREE.Mesh(faceGeom, backMat);
+    backMesh.rotation.y = Math.PI;
+    backMesh.position.z = -thickness/2 - 0.001;
+    cardGroup.add(backMesh);
+
+    // Initial pose
+    cardGroup.rotation.x = -0.08;
+    cardGroup.rotation.y = 0.55;
 
     // Ground
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(6, 6),
       new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
     );
-    ground.rotation.x = -Math.PI/2;
+    ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // iOS-safe upload loader (FileReader + downscale)
+    // iOS-safe image upload -> texture
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
       if (largest <= maxSize) return img;
       const s = maxSize / largest;
-      const w = Math.max(1, Math.round(w0*s));
-      const h = Math.max(1, Math.round(h0*s));
+      const w = Math.max(1, Math.round(w0 * s));
+      const h = Math.max(1, Math.round(h0 * s));
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
       c.getContext("2d").drawImage(img, 0, 0, w, h);
@@ -200,6 +248,7 @@
     }
 
     async function loadTextureFromFile(file, maxSize=2048) {
+      log(`Picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
       const dataURL = await new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onerror = () => reject(new Error("FileReader failed"));
@@ -231,22 +280,30 @@
 
     document.getElementById("frontInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0]; if (!file) return;
-      log("Front upload: " + file.name);
-      const tex = await loadTextureFromFile(file, 2048);
-      if (frontMat.map) frontMat.map.dispose();
-      frontMat.map = tex;
-      frontMat.needsUpdate = true;
-      log("Front applied ✅");
+      try {
+        const tex = await loadTextureFromFile(file, 2048);
+        if (frontMat.map) frontMat.map.dispose();
+        frontMat.map = tex;
+        frontMat.needsUpdate = true;
+        log("Front applied ✅");
+      } catch (err) {
+        log("Front failed ❌ " + err.message);
+        alert("Front failed: " + err.message);
+      }
     });
 
     document.getElementById("backInput").addEventListener("change", async (e) => {
       const file = e.target.files?.[0]; if (!file) return;
-      log("Back upload: " + file.name);
-      const tex = await loadTextureFromFile(file, 2048);
-      if (backMat.map) backMat.map.dispose();
-      backMat.map = tex;
-      backMat.needsUpdate = true;
-      log("Back applied ✅");
+      try {
+        const tex = await loadTextureFromFile(file, 2048);
+        if (backMat.map) backMat.map.dispose();
+        backMat.map = tex;
+        backMat.needsUpdate = true;
+        log("Back applied ✅");
+      } catch (err) {
+        log("Back failed ❌ " + err.message);
+        alert("Back failed: " + err.message);
+      }
     });
 
     window.addEventListener("resize", () => {
@@ -262,7 +319,7 @@
     }
     animate();
 
-    log("Viewer ready ✅");
+    log("Viewer ready ✅ (base model)");
   </script>
 </body>
 </html>
