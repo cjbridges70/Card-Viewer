@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Front Upload + Front Holo + Permanent Back)</title>
+  <title>Card Viewer (Rounded Faces + Front Holo + Permanent Back)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -30,7 +30,6 @@
     }
   </style>
 
-  <!-- Import map so OrbitControls can import "three" -->
   <script type="importmap">
     {
       "imports": {
@@ -50,7 +49,7 @@
     </label>
 
     <small>
-      Front gets holographic foil. Back uses your permanent repo image.<br/>
+      Front gets holographic foil. Back uses <code>assets/pokemon-back.jpg</code>.<br/>
       Drag to rotate • Scroll to zoom • Right-drag to pan
     </small>
   </div>
@@ -66,10 +65,12 @@
     window.addEventListener("unhandledrejection", (e) => log("PROMISE ERROR ❌ " + (e.reason?.message || e.reason || e)));
 
     // WebGL check
-    const test = document.createElement("canvas");
-    const gl = test.getContext("webgl") || test.getContext("experimental-webgl");
-    if (!gl) { log("WebGL not available ❌"); throw new Error("WebGL not available"); }
-    log("WebGL: available ✅");
+    {
+      const c = document.createElement("canvas");
+      const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+      if (!gl) { log("WebGL not available ❌"); throw new Error("WebGL not available"); }
+      log("WebGL: available ✅");
+    }
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -104,7 +105,6 @@
     const thickness = 0.02;
     const cornerRadius = 0.045;
 
-    // Rounded rectangle shape
     function roundedRectShape(w, h, r) {
       const x = -w/2, y = -h/2;
       const s = new THREE.Shape();
@@ -117,7 +117,7 @@
       return s;
     }
 
-    // Extrude, then remove cap triangles so they don't cover the face textures
+    // Extrude edge/bevel, then remove cap triangles so they don't cover the face meshes
     function extrudeSidesOnly(shape) {
       const full = new THREE.ExtrudeGeometry(shape, {
         depth: thickness,
@@ -139,8 +139,7 @@
 
       for (let i = 0; i < pos.count; i += 3) {
         const nz = (nor.getZ(i) + nor.getZ(i+1) + nor.getZ(i+2)) / 3;
-        // skip cap faces (front/back)
-        if (Math.abs(nz) > 0.6) continue;
+        if (Math.abs(nz) > 0.6) continue; // remove front/back caps
 
         for (let k = 0; k < 3; k++) {
           keptPos.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
@@ -154,99 +153,72 @@
       return out;
     }
 
-    const sideGeom = extrudeSidesOnly(roundedRectShape(cardWidth, cardHeight, cornerRadius));
-    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.92, metalness: 0.0 });
+    // ✅ Real rounded face geometry (no alpha mask, no plane seam)
+    function makeRoundedFaceGeometry() {
+      const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+      const g = new THREE.ShapeGeometry(shape, 24);
 
-    // Rounded alpha mask for face planes
-    function makeRoundedAlphaMap(size = 512) {
-      const c = document.createElement("canvas");
-      c.width = size; c.height = size;
-      const ctx = c.getContext("2d");
+      // UVs from XY bounds
+      g.computeBoundingBox();
+      const bb = g.boundingBox;
+      const size = new THREE.Vector3();
+      bb.getSize(size);
 
-      ctx.clearRect(0, 0, size, size);
-      ctx.fillStyle = "black";
-      ctx.fillRect(0, 0, size, size);
-
-      const r = Math.round((cornerRadius / Math.min(cardWidth, cardHeight)) * (size * 0.5));
-      const inset = 8;
-
-      function roundRect(x, y, w, h, rr) {
-        ctx.beginPath();
-        ctx.moveTo(x + rr, y);
-        ctx.lineTo(x + w - rr, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
-        ctx.lineTo(x + w, y + h - rr);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-        ctx.lineTo(x + rr, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
-        ctx.lineTo(x, y + rr);
-        ctx.quadraticCurveTo(x, y, x + rr, y);
-        ctx.closePath();
+      const pos = g.attributes.position;
+      const uv = [];
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        uv.push((x - bb.min.x) / size.x, (y - bb.min.y) / size.y);
       }
-
-      ctx.fillStyle = "white";
-      roundRect(inset, inset, size - inset*2, size - inset*2, r);
-      ctx.fill();
-
-      const tex = new THREE.CanvasTexture(c);
-      tex.colorSpace = THREE.NoColorSpace;
-
-      // ✅ crisp cutout (removes “faint border” / filtering halo)
-      tex.magFilter = THREE.NearestFilter;
-      tex.minFilter = THREE.NearestFilter;
-      tex.needsUpdate = true;
-
-      return tex;
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      return g;
     }
 
-    const alphaMap = makeRoundedAlphaMap(512);
+    const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
+    const sideGeom = extrudeSidesOnly(shape);
+    const faceGeom = makeRoundedFaceGeometry();
 
-    // Face geometry: slightly inset so it never overhangs the edge/bevel
-    const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, 1, 1);
-    faceGeom.scale(0.992, 0.992, 1); // ✅ removes “floating border” around edges
+    // Materials
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.92, metalness: 0.0 });
 
-    // Textures
     const loader = new THREE.TextureLoader();
 
-    // Permanent back texture (PUT THIS FILE IN YOUR REPO):
-    // assets/pokemon-back.jpg  (or .png)
+    // Permanent back texture from repo
     const permanentBack = loader.load(
       "./assets/pokemon-back.jpg",
       () => log("Back texture loaded ✅"),
       undefined,
-      () => log("Back texture failed ❌ Check: assets/pokemon-back.jpg exists (case sensitive)")
+      () => log("Back texture failed ❌ Check assets/pokemon-back.jpg (case sensitive)")
     );
     permanentBack.colorSpace = THREE.SRGBColorSpace;
-    permanentBack.flipY = false;
     permanentBack.anisotropy = 8;
+    // If the back ever looks inverted, toggle this:
+    permanentBack.flipY = true;
 
-    // Front default placeholder (until you upload)
-    const defaultFront = loader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg", () => log("Default front loaded ✅"));
+    // Default front placeholder
+    const defaultFront = loader.load(
+      "https://threejs.org/examples/textures/uv_grid_opengl.jpg",
+      () => log("Default front loaded ✅")
+    );
     defaultFront.colorSpace = THREE.SRGBColorSpace;
-    defaultFront.flipY = false;
     defaultFront.anisotropy = 8;
+    defaultFront.flipY = false;
 
-    // Face materials
-    // ✅ Use alphaTest instead of transparent to prevent semi-transparent fringes
     const frontMat = new THREE.MeshStandardMaterial({
       map: defaultFront,
-      alphaMap,
-      transparent: false,
-      alphaTest: 0.5,
       roughness: 0.55,
       metalness: 0.05
     });
 
     const backMat = new THREE.MeshStandardMaterial({
       map: permanentBack,
-      alphaMap,
-      transparent: false,
-      alphaTest: 0.5,
       roughness: 0.65,
       metalness: 0.02
     });
 
-    // Assemble card
+    // Build card group
     const cardGroup = new THREE.Group();
     scene.add(cardGroup);
 
@@ -273,16 +245,15 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---- FRONT-ONLY HOLO FILM OVERLAY (separate mesh) ----
-    function makeHoloFilmMaterial(alphaTex) {
+    // ---- FRONT-ONLY HOLO FILM OVERLAY (uses same rounded face geometry) ----
+    function makeHoloFilmMaterial() {
       return new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         uniforms: {
           uTime: { value: 0.0 },
-          uStrength: { value: 0.55 },
-          uAlpha: { value: alphaTex }
+          uStrength: { value: 0.55 }
         },
         vertexShader: `
           varying vec2 vUv;
@@ -303,7 +274,6 @@
           varying vec3 vV;
           uniform float uTime;
           uniform float uStrength;
-          uniform sampler2D uAlpha;
 
           float hash21(vec2 p){
             p = fract(p*vec2(123.34, 456.21));
@@ -312,9 +282,6 @@
           }
 
           void main() {
-            float mask = texture2D(uAlpha, vUv).r;
-            if (mask < 0.5) discard;
-
             vec3 N = normalize(vN);
             vec3 V = normalize(vV);
             float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
@@ -333,18 +300,16 @@
       });
     }
 
-    const frontFilmMat = makeHoloFilmMaterial(alphaMap);
-
-    // ✅ keep film “glued” to the surface without a visible offset rim
+    const frontFilmMat = makeHoloFilmMaterial();
     frontFilmMat.polygonOffset = true;
     frontFilmMat.polygonOffsetFactor = -1;
     frontFilmMat.polygonOffsetUnits = -1;
 
     const frontFilm = new THREE.Mesh(faceGeom, frontFilmMat);
-    frontFilm.position.z = thickness/2 + 0.0016; // ✅ closer than before to avoid edge artifacts
+    frontFilm.position.z = thickness/2 + 0.0016;
     cardGroup.add(frontFilm);
 
-    // ---- iOS-safe upload loader (front only) ----
+    // ---- Front upload ----
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
@@ -386,11 +351,8 @@
 
       const tex = new THREE.Texture(finalImg);
       tex.colorSpace = THREE.SRGBColorSpace;
-
-      // ✅ FIX: uploads upside down -> flipY true for uploaded textures
-      tex.flipY = true;
-
       tex.anisotropy = 8;
+      tex.flipY = true; // front upload is correct in your current setup
       tex.needsUpdate = true;
 
       log(`Front decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight} ✅`);
@@ -405,7 +367,7 @@
         if (frontMat.map) frontMat.map.dispose();
         frontMat.map = tex;
         frontMat.needsUpdate = true;
-        log("Front applied ✅ (upright + holo overlay)");
+        log("Front applied ✅");
       } catch (err) {
         log("Front failed ❌ " + err.message);
         alert("Front failed: " + err.message);
