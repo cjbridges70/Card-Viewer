@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>3D Card Viewer (Height Map + Holo)</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    #ui {
+      position: fixed; top: 12px; left: 12px; z-index: 10;
+      background: rgba(0,0,0,.55); color: #fff; padding: 10px 12px; border-radius: 10px;
+      backdrop-filter: blur(6px);
+      display: grid; gap: 8px; min-width: 280px;
+    }
+    #ui label { font-size: 12px; opacity: .9; display: grid; gap: 4px; }
+    #ui small { opacity: .75; line-height: 1.25; }
+    #ui .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+    #ui input[type="range"] { width: 160px; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <label>Front image (base color)
+      <input id="frontInput" type="file" accept="image/*" />
+    </label>
+    <label>Back image (base color)
+      <input id="backInput" type="file" accept="image/*" />
+    </label>
+    <label>Height map (grayscale)
+      <input id="heightInput" type="file" accept="image/*" />
+    </label>
+
+    <div class="row">
+      <label style="margin:0;">Displacement</label>
+      <input id="dispRange" type="range" min="0" max="0.02" step="0.0005" value="0.006" />
+    </div>
+
+    <div class="row">
+      <label style="margin:0;">Holographic</label>
+      <input id="holoToggle" type="checkbox" checked />
+    </div>
+
+    <small>
+      Drag to rotate • Scroll to zoom • Right-drag to pan<br/>
+      Height map: brighter = higher relief. Needs subdivisions to show detail.
+    </small>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+    import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import { RoomEnvironment } from "https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+
+    // ---------- Renderer ----------
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.physicallyCorrectLights = true;
+    document.body.appendChild(renderer.domElement);
+
+    // ---------- Scene / Camera ----------
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0b0f14, 2.5, 10);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 0.32, 1.35);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 0.6;
+    controls.maxDistance = 3.0;
+    controls.target.set(0, 0.05, 0);
+
+    // ---------- Environment reflections (key for holo sheen) ----------
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTex;
+
+    // ---------- Lights ----------
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+
+    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    key.position.set(1.4, 2.0, 1.2);
+    scene.add(key);
+
+    const rim = new THREE.DirectionalLight(0x9bd5ff, 1.0);
+    rim.position.set(0.0, 1.6, -2.2);
+    scene.add(rim);
+
+    // ---------- Card dimensions ----------
+    const cardWidth = 0.63;
+    const cardHeight = 0.88;
+    const thickness = 0.02;
+    const cornerRadius = 0.045;
+
+    // Rounded rectangle shape
+    function roundedRectShape(w, h, r) {
+      const x = -w / 2, y = -h / 2;
+      const shape = new THREE.Shape();
+      const rr = Math.min(r, w/2, h/2);
+      shape.moveTo(x + rr, y);
+      shape.lineTo(x + w - rr, y);
+      shape.quadraticCurveTo(x + w, y, x + w, y + rr);
+      shape.lineTo(x + w, y + h - rr);
+      shape.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+      shape.lineTo(x + rr, y + h);
+      shape.quadraticCurveTo(x, y + h, x, y + h - rr);
+      shape.lineTo(x, y + rr);
+      shape.quadraticCurveTo(x, y, x + rr, y);
+      return shape;
+    }
+
+    // Build the edge as an extrude (low poly is fine for edges)
+    const edgeGeom = new THREE.ExtrudeGeometry(roundedRectShape(cardWidth, cardHeight, cornerRadius), {
+      depth: thickness,
+      bevelEnabled: true,
+      bevelThickness: 0.004,
+      bevelSize: 0.004,
+      bevelSegments: 3,
+      curveSegments: 24
+    });
+    edgeGeom.translate(0, 0, -thickness/2);
+
+    // Front/back faces as separate planes with high subdivisions for displacement
+    // Increase segments if you want finer height-map detail (costs more GPU)
+    const segX = 220;
+    const segY = 300;
+
+    const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, segX, segY);
+
+    // Mask out corners (so plane stays rounded): discard fragments outside rounded rect
+    // We'll do this via onBeforeCompile for each face material.
+
+    const texLoader = new THREE.TextureLoader();
+
+    // Defaults so you see something immediately
+    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg");
+    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg");
+    for (const t of [defaultFront, defaultBack]) {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 8;
+      t.flipY = false;
+    }
+
+    // Shared height texture (optional)
+    let heightTex = null;
+
+    // ---- Holographic physical material base ----
+    function makeHoloPhysicalMaterial(mapTex) {
+      const mat = new THREE.MeshPhysicalMaterial({
+        map: mapTex,
+        metalness: 0.35,
+        roughness: 0.25,
+        envMapIntensity: 1.25,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.12,
+        // iridescence is supported in modern three versions:
+        iridescence: 1.0,
+        iridescenceIOR: 1.35,
+        iridescenceThicknessRange: [120, 680], // nanometers-ish; controls rainbow spread
+      });
+
+      // Height map (true displacement) — requires lots of segments (we have them)
+      mat.displacementScale = parseFloat(document.getElementById("dispRange").value);
+      mat.displacementBias = -mat.displacementScale * 0.35;
+
+      // Rounded-corner alpha mask + extra “holo film” sparkle/rainbow tweak
+      mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = { value: 0 };
+        shader.uniforms.uHolo = { value: 1 };
+        shader.uniforms.uRadius = { value: cornerRadius };
+        shader.uniforms.uSize = { value: new THREE.Vector2(cardWidth, cardHeight) };
+
+        // Pass vUv already exists for map; we’ll use it for masking
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            "#include <common>",
+            `#include <common>
+             uniform float uTime;
+             uniform float uHolo;
+             uniform float uRadius;
+             uniform vec2 uSize;
+
+             float sdRoundedRect(vec2 p, vec2 b, float r){
+               vec2 q = abs(p) - b + vec2(r);
+               return length(max(q,0.0)) + min(max(q.x,q.y),0.0) - r;
+             }
+
+             // cheap noise
+             float hash21(vec2 p){
+               p = fract(p*vec2(123.34, 456.21));
+               p += dot(p, p+45.32);
+               return fract(p.x*p.y);
+             }
+            `
+          )
+          .replace(
+            "#include <alphamap_fragment>",
+            `#include <alphamap_fragment>
+             // Rounded-corner clip in UV space
+             vec2 uv = vUv;
+             // map uv 0..1 -> local coords centered at 0
+             vec2 p = (uv - 0.5) * uSize;
+             float d = sdRoundedRect(p, 0.5*uSize, uRadius);
+             if (d > 0.0005) discard;
+            `
+          )
+          .replace(
+            "#include <output_fragment>",
+            `#include <output_fragment>
+             if (uHolo > 0.5) {
+               // view-dependent rainbow sheen (adds on top of physical shading)
+               // fresnel-ish term
+               float f = pow(1.0 - saturate(dot(normalize(vNormal), normalize(vViewPosition))), 2.0);
+
+               // moving rainbow bands
+               float bands = sin((vUv.y*60.0) + (uTime*1.6) + vUv.x*12.0) * 0.5 + 0.5;
+
+               // subtle sparkle
+               float sparkle = step(0.985, hash21(vUv*vec2(900.0,700.0) + uTime*0.15)) * 0.9;
+
+               vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
+               vec3 film = rainbow * (0.18 + 0.55*f) + sparkle;
+
+               gl_FragColor.rgb += film * 0.55;
+             }
+            `
+          );
+
+        mat.userData.shader = shader;
+      };
+
+      return mat;
+    }
+
+    const frontMat = makeHoloPhysicalMaterial(defaultFront);
+    const backMat  = makeHoloPhysicalMaterial(defaultBack);
+
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: 0x1b222e,
+      metalness: 0.0,
+      roughness: 0.95
+    });
+
+    // Apply height map if present
+    function applyHeightToMats() {
+      frontMat.displacementMap = heightTex;
+      backMat.displacementMap = heightTex;
+      frontMat.needsUpdate = true;
+      backMat.needsUpdate = true;
+    }
+
+    // Group card parts
+    const cardGroup = new THREE.Group();
+    scene.add(cardGroup);
+
+    // Edge mesh
+    const edgeMesh = new THREE.Mesh(edgeGeom, edgeMat);
+    cardGroup.add(edgeMesh);
+
+    // Face meshes (offset slightly outward so they don't z-fight with edge caps)
+    const frontMesh = new THREE.Mesh(faceGeom, frontMat);
+    frontMesh.position.z = thickness/2 + 0.0008;
+    cardGroup.add(frontMesh);
+
+    const backMesh = new THREE.Mesh(faceGeom, backMat);
+    backMesh.rotation.y = Math.PI;      // flip
+    backMesh.position.z = -thickness/2 - 0.0008;
+    cardGroup.add(backMesh);
+
+    // Initial pose
+    cardGroup.rotation.x = -0.08;
+    cardGroup.rotation.y = 0.55;
+
+    // Ground plane
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(6, 6),
+      new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 1, metalness: 0 })
+    );
+    ground.rotation.x = -Math.PI/2;
+    ground.position.y = -0.55;
+    scene.add(ground);
+
+    // ---------- File upload helpers ----------
+    function loadTextureFromFile(file, cb) {
+      const url = URL.createObjectURL(file);
+      texLoader.load(url, (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 8;
+        tex.flipY = false;
+        cb(tex);
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    document.getElementById("frontInput").addEventListener("change", (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      loadTextureFromFile(f, (tex) => {
+        if (frontMat.map) frontMat.map.dispose();
+        frontMat.map = tex;
+        frontMat.needsUpdate = true;
+      });
+    });
+
+    document.getElementById("backInput").addEventListener("change", (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      loadTextureFromFile(f, (tex) => {
+        if (backMat.map) backMat.map.dispose();
+        backMat.map = tex;
+        backMat.needsUpdate = true;
+      });
+    });
+
+    document.getElementById("heightInput").addEventListener("change", (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      loadTextureFromFile(f, (tex) => {
+        // Height maps should be treated like data. Keep in sRGB? Better as linear.
+        tex.colorSpace = THREE.NoColorSpace; // important: don't apply sRGB curve
+        tex.anisotropy = 8;
+        tex.flipY = false;
+        if (heightTex) heightTex.dispose();
+        heightTex = tex;
+        applyHeightToMats();
+      });
+    });
+
+    document.getElementById("dispRange").addEventListener("input", (e) => {
+      const v = parseFloat(e.target.value);
+      frontMat.displacementScale = v;
+      backMat.displacementScale = v;
+      frontMat.displacementBias = -v * 0.35;
+      backMat.displacementBias = -v * 0.35;
+    });
+
+    document.getElementById("holoToggle").addEventListener("change", (e) => {
+      const on = e.target.checked ? 1 : 0;
+      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uHolo.value = on;
+      if (backMat.userData.shader)  backMat.userData.shader.uniforms.uHolo.value = on;
+    });
+
+    // ---------- Resize ----------
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------- Animate ----------
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+
+      const t = clock.getElapsedTime();
+      if (frontMat.userData.shader) frontMat.userData.shader.uniforms.uTime.value = t;
+      if (backMat.userData.shader)  backMat.userData.shader.uniforms.uTime.value = t;
+
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
