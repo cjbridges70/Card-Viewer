@@ -120,7 +120,6 @@
     }
   </style>
 
-  <!-- Import map so OrbitControls can import "three" -->
   <script type="importmap">
     {
       "imports": {
@@ -207,8 +206,7 @@
       </div>
 
       <small>
-        Tips: Use a clean grayscale height map for best results. If auto-height is noisy, lower “Holo reacts to height”
-        or use a manual height map. Foil mask lets you restrict holo to specific regions.
+        Fixes included: holo film is displaced to match the front mesh (no more “behind the art”). Foil mask supported.
       </small>
     </div>
   </div>
@@ -217,7 +215,7 @@
     import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-    // ---------- Tiny logger ----------
+    // ---------- Logger ----------
     const statusEl = document.getElementById("status");
     const log = (m) => statusEl.textContent = m + "\n" + statusEl.textContent;
 
@@ -263,7 +261,7 @@
     const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-1.8, 1.2, 1.6); scene.add(fill);
     const rim  = new THREE.DirectionalLight(0x9bd5ff, 0.6); rim.position.set(0.0, 1.8, -2.0); scene.add(rim);
 
-    // ---------- Card dimensions (thin, no bevel) ----------
+    // ---------- Card dimensions ----------
     const cardWidth = 0.63;
     const cardHeight = 0.88;
     const thickness = 0.004;
@@ -299,7 +297,7 @@
 
       for (let i = 0; i < pos.count; i += 3) {
         const nz = (nor.getZ(i) + nor.getZ(i+1) + nor.getZ(i+2)) / 3;
-        if (Math.abs(nz) > 0.6) continue; // remove front/back caps
+        if (Math.abs(nz) > 0.6) continue;
         for (let k = 0; k < 3; k++) {
           keptPos.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
           keptNor.push(nor.getX(i+k), nor.getY(i+k), nor.getZ(i+k));
@@ -312,10 +310,9 @@
       return out;
     }
 
-    // High tessellation so displacement can be exaggerated
     function makeRoundedFaceGeometry() {
       const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-      const g = new THREE.ShapeGeometry(shape, 140);
+      const g = new THREE.ShapeGeometry(shape, 140); // high tessellation for displacement
 
       g.computeBoundingBox();
       const bb = g.boundingBox;
@@ -355,7 +352,7 @@
     );
     permanentBack.colorSpace = THREE.SRGBColorSpace;
     permanentBack.anisotropy = 8;
-    permanentBack.flipY = true; // if your back is upside down, set false
+    permanentBack.flipY = true;
 
     const defaultFront = loader.load(
       "https://threejs.org/examples/textures/uv_grid_opengl.jpg",
@@ -365,13 +362,12 @@
     defaultFront.anisotropy = 8;
     defaultFront.flipY = false;
 
-    // Default height and foil mask
     const defaultHeight = new THREE.DataTexture(new Uint8Array([128]), 1, 1, THREE.RedFormat);
     defaultHeight.colorSpace = THREE.NoColorSpace;
     defaultHeight.flipY = true;
     defaultHeight.needsUpdate = true;
 
-    const defaultMask = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat); // fully on
+    const defaultMask = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat);
     defaultMask.colorSpace = THREE.NoColorSpace;
     defaultMask.flipY = true;
     defaultMask.needsUpdate = true;
@@ -400,7 +396,6 @@
     cardGroup.add(new THREE.Mesh(sideGeom, edgeMat));
 
     const Z_FACE = thickness/2 + 0.0007;
-    const Z_FILM = thickness/2 + 0.0010;
 
     const frontMesh = new THREE.Mesh(faceGeom, frontMat);
     frontMesh.position.z = Z_FACE;
@@ -423,7 +418,7 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // ---------- Holo film (height + mask aware) ----------
+    // ---------- Holo film (FIXED: displaced in shader to match front displacement) ----------
     function makeHoloFilmMaterial(heightTex, maskTex) {
       return new THREE.ShaderMaterial({
         transparent: true,
@@ -436,7 +431,9 @@
           uMask: { value: maskTex },
           uRelief: { value: 1.20 },
           uBandScale: { value: 85.0 },
-          uSparkle: { value: 0.65 }
+          uSparkle: { value: 0.65 },
+          uDispScale: { value: 0.03 },
+          uDispBias:  { value: -0.02 }
         },
         vertexShader: `
           varying vec2 vUv;
@@ -444,13 +441,25 @@
           varying vec3 vV;
           varying vec3 vTx;
           varying vec3 vTy;
+
+          uniform sampler2D uHeight;
+          uniform float uDispScale;
+          uniform float uDispBias;
+
           void main() {
             vUv = uv;
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+
+            // Displace film to match the front mesh displacement
+            float h = texture2D(uHeight, vUv).r;
+            vec3 displaced = position + normal * (h * uDispScale + uDispBias);
+
+            vec4 mv = modelViewMatrix * vec4(displaced, 1.0);
             vV = -mv.xyz;
+
             vN = normalize(normalMatrix * normal);
             vTx = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
             vTy = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));
+
             gl_Position = projectionMatrix * mv;
           }
         `,
@@ -480,7 +489,6 @@
             float mask = texture2D(uMask, vUv).r;
             if (mask < 0.01) discard;
 
-            // Height gradient -> perturbed normal (foil reacts to relief)
             float eps = 0.0015;
             float hC  = texture2D(uHeight, vUv).r;
             float hX1 = texture2D(uHeight, vUv + vec2(eps, 0.0)).r;
@@ -495,7 +503,6 @@
             vec3 V = normalize(vV);
             float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
 
-            // Bands + diagonal + sparkle (modern-ish foil)
             float bs = uBandScale;
             float bands = sin(vUv.y*bs + vUv.x*(bs*0.26) + uTime*1.6 + hC*6.0) * 0.5 + 0.5;
             float diag  = sin(vUv.x*(bs*1.05) + vUv.y*(bs*0.65) + uTime*0.9 + hC*4.0) * 0.5 + 0.5;
@@ -506,7 +513,6 @@
             vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
             vec3 film = rainbow*(0.08 + 0.92*fres) + rainbow*(diag*0.07) + sparkle;
 
-            // Height gating so ridges catch more foil + mask controls region
             float ridge = smoothstep(0.45, 0.75, hC);
             float a = clamp((0.10 + 0.9*fres) * uStrength * (0.85 + 0.35*ridge) * mask, 0.0, 1.0);
 
@@ -522,10 +528,14 @@
     frontFilmMat.polygonOffsetUnits = -1;
 
     const frontFilm = new THREE.Mesh(faceGeom, frontFilmMat);
-    frontFilm.position.z = Z_FILM;
+    frontFilm.position.z = Z_FACE + 0.0002; // FIX: keep film just above face, displacement handles depth
     cardGroup.add(frontFilm);
 
-    // ---------- Helpers: file decode & textures ----------
+    // Keep shader displacement uniforms synced with material displacement
+    frontFilmMat.uniforms.uDispScale.value = frontMat.displacementScale;
+    frontFilmMat.uniforms.uDispBias.value  = frontMat.displacementBias;
+
+    // ---------- Helpers ----------
     let lastFrontImage = null;
 
     function downscaleImageToMax(img, maxSize) {
@@ -564,7 +574,7 @@
     function imageToTexture(img, { isData=false } = {}) {
       const tex = new THREE.Texture(img);
       tex.anisotropy = 8;
-      tex.flipY = true; // matches your working upload orientation
+      tex.flipY = true;
       tex.colorSpace = isData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
       tex.needsUpdate = true;
       return tex;
@@ -579,12 +589,12 @@
       return tex;
     }
 
-    function applyFrontTexture(tex) {
+    function applyFrontTexture(tex, label="Custom front") {
       if (frontMat.map) frontMat.map.dispose();
       frontMat.map = tex;
       frontMat.needsUpdate = true;
       if (tex.image) lastFrontImage = tex.image;
-      document.getElementById("titlePill").textContent = "Custom front";
+      document.getElementById("titlePill").textContent = label;
     }
 
     function applyHeightTexture(tex) {
@@ -607,12 +617,14 @@
       frontMat.bumpMap = defaultHeight;
       frontMat.displacementMap = defaultHeight;
       frontMat.needsUpdate = true;
+
       frontFilmMat.uniforms.uHeight.value = defaultHeight;
       frontFilmMat.uniforms.uMask.value = defaultMask;
+
       log("Maps cleared ✅");
     }
 
-    // ---------- Option A: Generate height from front ----------
+    // ---------- Auto height generator ----------
     function generateHeightFromImage(img, maxSize = 1024) {
       const w0 = img.naturalWidth || img.width;
       const h0 = img.naturalHeight || img.height;
@@ -628,14 +640,12 @@
       const im = ctx.getImageData(0, 0, w, h);
       const d = im.data;
 
-      // luminance
       const lum = new Float32Array(w * h);
       for (let i = 0, p = 0; p < lum.length; p++, i += 4) {
         const r = d[i] / 255, g = d[i+1] / 255, b = d[i+2] / 255;
         lum[p] = 0.2126*r + 0.7152*g + 0.0722*b;
       }
 
-      // blur (3x3 box) x2 for smoother height
       function blur3x3(src) {
         const out = new Float32Array(src.length);
         for (let y = 0; y < h; y++) {
@@ -657,7 +667,6 @@
       const base1 = blur3x3(lum);
       const base = blur3x3(base1);
 
-      // Sobel-ish edges
       const edge = new Float32Array(w * h);
       for (let y = 1; y < h-1; y++) {
         for (let x = 1; x < w-1; x++) {
@@ -672,11 +681,9 @@
         }
       }
 
-      // combine + normalize
       const height = new Float32Array(w * h);
       let mn = 1e9, mx = -1e9;
       for (let i = 0; i < height.length; i++) {
-        // heavier base makes more "plate" height; edges add relief detail
         const v = base[i] * 0.95 + edge[i] * 0.55;
         height[i] = v;
         mn = Math.min(mn, v);
@@ -694,7 +701,7 @@
       return c;
     }
 
-    // Generate foil mask from front (simple: bright & saturated areas)
+    // ---------- Auto foil mask generator ----------
     function generateFoilMaskFromImage(img, maxSize = 1024) {
       const w0 = img.naturalWidth || img.width;
       const h0 = img.naturalHeight || img.height;
@@ -710,16 +717,12 @@
       const im = ctx.getImageData(0, 0, w, h);
       const d = im.data;
 
-      // crude "foil region" heuristic:
-      // - prefer higher saturation and brightness
-      // - then blur for smooth mask
       const m = new Float32Array(w*h);
       for (let i=0, p=0; p<m.length; p++, i+=4) {
         const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
         const maxc = Math.max(r,g,b), minc = Math.min(r,g,b);
         const v = maxc;
         const sat = (maxc === 0) ? 0 : (maxc - minc) / maxc;
-        // tune: more weight on saturation so background border doesn't get foiled as much
         m[p] = Math.min(1.0, (v*0.55 + sat*0.75));
       }
 
@@ -739,7 +742,6 @@
       const b1 = blur3x3(m);
       const b2 = blur3x3(b1);
 
-      // apply threshold + soft knee
       const out = ctx.createImageData(w, h);
       for (let i=0, p=0; p<b2.length; p++, i+=4) {
         const v = b2[p];
@@ -767,6 +769,8 @@
     dispSlider.addEventListener("input", () => {
       frontMat.displacementScale = parseFloat(dispSlider.value);
       frontMat.needsUpdate = true;
+      // Sync film displacement too
+      frontFilmMat.uniforms.uDispScale.value = frontMat.displacementScale;
     });
 
     holoSlider.addEventListener("input", () => {
@@ -802,9 +806,8 @@
         lastFrontImage = finalImg;
 
         const tex = imageToTexture(finalImg, { isData:false });
-        applyFrontTexture(tex);
+        applyFrontTexture(tex, file.name);
 
-        document.getElementById("titlePill").textContent = file.name;
         log(`Front applied ✅ ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
       } catch (err) {
         log("Front failed ❌ " + err.message);
@@ -882,9 +885,8 @@
       log("View reset ✅");
     });
 
-    // Export PNG (uses preserveDrawingBuffer)
+    // Export PNG
     document.getElementById("exportBtn").addEventListener("click", () => {
-      // quick render to ensure latest frame
       renderer.render(scene, camera);
       const a = document.createElement("a");
       a.download = "card_view.png";
@@ -893,12 +895,7 @@
       log("Exported PNG ✅");
     });
 
-    // ---------- Presets (edit these to match your repo filenames) ----------
-    // Put files in:
-    //  assets/cards/<id>-front.jpg
-    //  assets/cards/<id>-height.png   (optional)
-    //  assets/cards/<id>-mask.png     (optional)
-    //  assets/cards/<id>-thumb.jpg    (optional)
+    // ---------- Presets ----------
     const PRESETS = [
       { id: "charizard", name: "Charizard (example)", tune: { bump: 0.04, disp: 0.035, holo: 0.65, relief: 1.35, band: 92, sparkle: 0.70 } },
       { id: "pikachu",   name: "Pikachu (example)",   tune: { bump: 0.03, disp: 0.028, holo: 0.58, relief: 1.10, band: 80, sparkle: 0.55 } },
@@ -917,13 +914,16 @@
       if (typeof t.band === "number") bandSlider.value = String(Math.round(t.band));
       if (typeof t.sparkle === "number") sparkleSlider.value = t.sparkle.toFixed(2);
 
-      // apply
       frontMat.bumpScale = parseFloat(bumpSlider.value);
       frontMat.displacementScale = parseFloat(dispSlider.value);
       frontFilmMat.uniforms.uStrength.value = parseFloat(holoSlider.value);
       frontFilmMat.uniforms.uRelief.value = parseFloat(holoReliefSlider.value);
       frontFilmMat.uniforms.uBandScale.value = parseFloat(bandSlider.value);
       frontFilmMat.uniforms.uSparkle.value = parseFloat(sparkleSlider.value);
+
+      // keep film displacement synced too
+      frontFilmMat.uniforms.uDispScale.value = frontMat.displacementScale;
+
       frontMat.needsUpdate = true;
     }
 
@@ -940,7 +940,7 @@
       return new Promise((resolve, reject) => {
         loader.load(path, (t) => {
           t.anisotropy = 8;
-          t.flipY = true; // adjust per your files if needed
+          t.flipY = true;
           t.colorSpace = isData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
           resolve(t);
         }, undefined, () => reject(new Error(`Failed: ${path}`)));
@@ -956,12 +956,9 @@
         setSlidersFromTune(p.tune);
 
         const frontTex = await loadTexture(front, { isData:false });
-        applyFrontTexture(frontTex);
-
-        // Save decoded image for Generate Height/Mask buttons
+        applyFrontTexture(frontTex, p.name);
         if (frontTex.image) lastFrontImage = frontTex.image;
 
-        // Height is optional
         try {
           const hTex = await loadTexture(height, { isData:true });
           applyHeightTexture(hTex);
@@ -971,7 +968,6 @@
           applyHeightTexture(defaultHeight);
         }
 
-        // Mask is optional
         try {
           const mTex = await loadTexture(mask, { isData:true });
           applyMaskTexture(mTex);
@@ -1001,7 +997,7 @@
         const { thumb } = presetPaths(p.id);
         const img = document.createElement("img");
         img.alt = p.name;
-        img.src = thumb; // may 404; that's okay (we’ll show fallback)
+        img.src = thumb;
         img.onerror = () => { img.remove(); };
 
         const label = document.createElement("span");
@@ -1045,7 +1041,6 @@
     animate();
 
     log("Viewer ready ✅");
-
   </script>
 </body>
 </html>
