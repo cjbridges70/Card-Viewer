@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Card Viewer (Base - Textures Working)</title>
+  <title>Card Viewer (Front Upload + Front Holo + Permanent Back)</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display: block; }
@@ -24,7 +24,7 @@
       border: 1px solid rgba(255,255,255,.08);
       padding: 8px 10px;
       border-radius: 10px;
-      max-height: 190px;
+      max-height: 200px;
       overflow: auto;
       line-height: 1.25;
     }
@@ -49,11 +49,10 @@
       <input id="frontInput" type="file" accept="image/jpeg,image/png" />
     </label>
 
-    <label>Back image (JPG/PNG)
-      <input id="backInput" type="file" accept="image/jpeg,image/png" />
-    </label>
-
-    <small>Drag to rotate • Scroll to zoom • Right-drag to pan</small>
+    <small>
+      Front gets holographic foil. Back uses your permanent repo image.<br/>
+      Drag to rotate • Scroll to zoom • Right-drag to pan
+    </small>
   </div>
 
   <script type="module">
@@ -118,7 +117,7 @@
       return s;
     }
 
-    // Build an extrude, then REMOVE cap triangles so it doesn't cover the textures
+    // Extrude, then remove cap triangles so they don't cover the face textures
     function extrudeSidesOnly(shape) {
       const full = new THREE.ExtrudeGeometry(shape, {
         depth: thickness,
@@ -131,41 +130,32 @@
       full.translate(0, 0, -thickness/2);
       full.computeVertexNormals();
 
-      // Work with non-indexed triangles for easy filtering
       const g = full.toNonIndexed();
       const pos = g.attributes.position;
       const nor = g.attributes.normal;
 
-      const keptPositions = [];
-      const keptNormals = [];
+      const keptPos = [];
+      const keptNor = [];
 
-      // Each triangle is 3 vertices in sequence
       for (let i = 0; i < pos.count; i += 3) {
         const nz = (nor.getZ(i) + nor.getZ(i+1) + nor.getZ(i+2)) / 3;
-
-        // Cap faces have normals roughly +/-Z. Keep everything else (sides + bevel).
+        // skip cap faces (front/back)
         if (Math.abs(nz) > 0.6) continue;
 
         for (let k = 0; k < 3; k++) {
-          keptPositions.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
-          keptNormals.push(nor.getX(i+k), nor.getY(i+k), nor.getZ(i+k));
+          keptPos.push(pos.getX(i+k), pos.getY(i+k), pos.getZ(i+k));
+          keptNor.push(nor.getX(i+k), nor.getY(i+k), nor.getZ(i+k));
         }
       }
 
       const out = new THREE.BufferGeometry();
-      out.setAttribute("position", new THREE.Float32BufferAttribute(keptPositions, 3));
-      out.setAttribute("normal", new THREE.Float32BufferAttribute(keptNormals, 3));
+      out.setAttribute("position", new THREE.Float32BufferAttribute(keptPos, 3));
+      out.setAttribute("normal", new THREE.Float32BufferAttribute(keptNor, 3));
       return out;
     }
 
-    const shape = roundedRectShape(cardWidth, cardHeight, cornerRadius);
-    const sideGeom = extrudeSidesOnly(shape);
-
-    const edgeMat = new THREE.MeshStandardMaterial({
-      color: 0x1b222e,
-      roughness: 0.92,
-      metalness: 0.0
-    });
+    const sideGeom = extrudeSidesOnly(roundedRectShape(cardWidth, cardHeight, cornerRadius));
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.92, metalness: 0.0 });
 
     // Rounded alpha mask for face planes
     function makeRoundedAlphaMap(size = 512) {
@@ -177,7 +167,6 @@
       ctx.fillStyle = "black";
       ctx.fillRect(0, 0, size, size);
 
-      // Convert corner radius into pixels (approx)
       const r = Math.round((cornerRadius / Math.min(cardWidth, cardHeight)) * (size * 0.5));
       const inset = 8;
 
@@ -208,36 +197,49 @@
     const alphaMap = makeRoundedAlphaMap(512);
     const faceGeom = new THREE.PlaneGeometry(cardWidth, cardHeight, 1, 1);
 
-    const texLoader = new THREE.TextureLoader();
-    const defaultFront = texLoader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg", () => log("Default front loaded ✅"));
-    const defaultBack  = texLoader.load("https://threejs.org/examples/textures/uv_grid_directx.jpg", () => log("Default back loaded ✅"));
-    for (const t of [defaultFront, defaultBack]) {
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.flipY = false;
-      t.anisotropy = 8;
-    }
+    // Textures
+    const loader = new THREE.TextureLoader();
 
+    // Permanent back texture (PUT THIS FILE IN YOUR REPO):
+    // assets/pokemon-back.jpg  (or .png)
+    const permanentBack = loader.load(
+      "./assets/pokemon-back.jpg",
+      () => log("Back texture loaded ✅"),
+      undefined,
+      () => log("Back texture failed ❌ Check: assets/pokemon-back.jpg exists (case sensitive)")
+    );
+    permanentBack.colorSpace = THREE.SRGBColorSpace;
+    permanentBack.flipY = false;
+    permanentBack.anisotropy = 8;
+
+    // Front default placeholder (until you upload)
+    const defaultFront = loader.load("https://threejs.org/examples/textures/uv_grid_opengl.jpg", () => log("Default front loaded ✅"));
+    defaultFront.colorSpace = THREE.SRGBColorSpace;
+    defaultFront.flipY = false;
+    defaultFront.anisotropy = 8;
+
+    // Face materials
     const frontMat = new THREE.MeshStandardMaterial({
       map: defaultFront,
       alphaMap,
       transparent: true,
-      roughness: 0.6,
-      metalness: 0.05
-    });
-    const backMat = new THREE.MeshStandardMaterial({
-      map: defaultBack,
-      alphaMap,
-      transparent: true,
-      roughness: 0.6,
+      roughness: 0.55,
       metalness: 0.05
     });
 
-    // Assemble
+    const backMat = new THREE.MeshStandardMaterial({
+      map: permanentBack,
+      alphaMap,
+      transparent: true,
+      roughness: 0.65,
+      metalness: 0.02
+    });
+
+    // Assemble card
     const cardGroup = new THREE.Group();
     scene.add(cardGroup);
 
-    const edgeMesh = new THREE.Mesh(sideGeom, edgeMat);
-    cardGroup.add(edgeMesh);
+    cardGroup.add(new THREE.Mesh(sideGeom, edgeMat));
 
     const frontMesh = new THREE.Mesh(faceGeom, frontMat);
     frontMesh.position.z = thickness/2 + 0.0012;
@@ -260,7 +262,72 @@
     ground.position.y = -0.55;
     scene.add(ground);
 
-    // iOS-safe upload loader
+    // ---- FRONT-ONLY HOLO FILM OVERLAY (separate mesh) ----
+    function makeHoloFilmMaterial(alphaTex) {
+      return new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uTime: { value: 0.0 },
+          uStrength: { value: 0.55 },
+          uAlpha: { value: alphaTex }
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          varying vec3 vN;
+          varying vec3 vV;
+          void main() {
+            vUv = uv;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vV = -mv.xyz;
+            vN = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          precision highp float;
+          varying vec2 vUv;
+          varying vec3 vN;
+          varying vec3 vV;
+          uniform float uTime;
+          uniform float uStrength;
+          uniform sampler2D uAlpha;
+
+          float hash21(vec2 p){
+            p = fract(p*vec2(123.34, 456.21));
+            p += dot(p, p+45.32);
+            return fract(p.x*p.y);
+          }
+
+          void main() {
+            float mask = texture2D(uAlpha, vUv).r;
+            if (mask < 0.5) discard;
+
+            vec3 N = normalize(vN);
+            vec3 V = normalize(vV);
+            float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
+
+            float bands = sin(vUv.y*70.0 + vUv.x*18.0 + uTime*1.6) * 0.5 + 0.5;
+            float diag  = sin(vUv.x*90.0 + vUv.y*55.0 + uTime*0.9) * 0.5 + 0.5;
+            float sparkle = step(0.987, hash21(vUv*vec2(1100.0,900.0) + uTime*0.2)) * 0.7;
+
+            vec3 rainbow = 0.55 + 0.45*cos(6.28318*(vec3(0.0,0.33,0.67) + bands));
+            vec3 film = rainbow*(0.10 + 0.85*fres) + rainbow*(diag*0.08) + sparkle;
+
+            float a = clamp((0.10 + 0.9*fres) * uStrength, 0.0, 1.0);
+            gl_FragColor = vec4(film * a, a);
+          }
+        `
+      });
+    }
+
+    const frontFilmMat = makeHoloFilmMaterial(alphaMap);
+    const frontFilm = new THREE.Mesh(faceGeom, frontFilmMat);
+    frontFilm.position.z = thickness/2 + 0.0024; // slightly above the front image
+    cardGroup.add(frontFilm);
+
+    // ---- iOS-safe upload loader (front only) ----
     function downscaleImageToMax(img, maxSize) {
       const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
       const largest = Math.max(w0, h0);
@@ -276,8 +343,9 @@
       return out;
     }
 
-    async function loadTextureFromFile(file, maxSize=2048) {
-      log(`Picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+    async function loadFrontTextureFromFile(file, maxSize=2048) {
+      log(`Front picked: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+
       const dataURL = await new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onerror = () => reject(new Error("FileReader failed"));
@@ -299,58 +367,54 @@
         maybeDown.onerror = () => reject(new Error("Downscaled image decode failed"));
       });
 
-      log(`Decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight}`);
-
       const tex = new THREE.Texture(finalImg);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.flipY = false;
       tex.anisotropy = 8;
+
+      // ✅ Fix upside-down uploads (apply UV flip via repeat/offset)
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.repeat.set(1, -1);
+      tex.offset.set(0, 1);
+
       tex.needsUpdate = true;
+      log(`Front decoded: ${finalImg.naturalWidth}x${finalImg.naturalHeight} ✅`);
       return tex;
     }
 
     document.getElementById("frontInput").addEventListener("change", async (e) => {
-      const file = e.target.files?.[0]; if (!file) return;
+      const file = e.target.files?.[0];
+      if (!file) return;
       try {
-        const tex = await loadTextureFromFile(file, 2048);
+        const tex = await loadFrontTextureFromFile(file, 2048);
         if (frontMat.map) frontMat.map.dispose();
         frontMat.map = tex;
         frontMat.needsUpdate = true;
-        log("Front applied ✅");
+        log("Front applied ✅ (upright + holo overlay)");
       } catch (err) {
         log("Front failed ❌ " + err.message);
         alert("Front failed: " + err.message);
       }
     });
 
-    document.getElementById("backInput").addEventListener("change", async (e) => {
-      const file = e.target.files?.[0]; if (!file) return;
-      try {
-        const tex = await loadTextureFromFile(file, 2048);
-        if (backMat.map) backMat.map.dispose();
-        backMat.map = tex;
-        backMat.needsUpdate = true;
-        log("Back applied ✅");
-      } catch (err) {
-        log("Back failed ❌ " + err.message);
-        alert("Back failed: " + err.message);
-      }
-    });
-
+    // Resize + animate
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
+    const clock = new THREE.Clock();
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
+      frontFilmMat.uniforms.uTime.value = clock.getElapsedTime();
       renderer.render(scene, camera);
     }
     animate();
 
-    log("Viewer ready ✅ (textures should show)");
+    log("Viewer ready ✅");
   </script>
 </body>
 </html>
