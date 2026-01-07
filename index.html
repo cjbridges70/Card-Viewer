@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Card Viewer (Reactive Holo + Height/Emboss + Auto Mask)</title>
+  <title>Card Viewer (Studio + Realistic Holo + Safe Emboss)</title>
   <style>
     html,body{height:100%;margin:0;overflow:hidden;background:#0b0e12;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     #hud{position:fixed;left:12px;top:12px;right:12px;z-index:10;display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:#e7eefc;}
@@ -64,14 +64,12 @@
   <script type="module">
     import * as THREE from './libs/three.module.js';
 
-    // paths (your structure)
     const PATH_BACK = './assets/pokemon-back.jpg';
     const PRESETS = {
       ray:   './assets/presets/mega-rayquaza-front.JPG',
       blast: './assets/presets/mega-blastoise-front.JPG'
     };
 
-    // ui/log/status
     const logEl = document.getElementById('log');
     const statusEl = document.getElementById('status');
     const ui = {
@@ -91,12 +89,15 @@
     function status(s){ statusEl.textContent = s; }
     ui.toggleLog.onclick = ()=> logEl.classList.toggle('on');
 
-    // renderer/scene
     const renderer = new THREE.WebGLRenderer({ antialias:true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    // You asked about tone mapping: we can keep it OFF here because we're manually controlling exposure.
+    // If you want toneMapping later, we can flip it on once the shader is stable.
     renderer.toneMapping = THREE.NoToneMapping;
+
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -104,20 +105,18 @@
 
     const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.01, 50);
 
-    // studio lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 2.2));
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 2.6));
-    const topLight = new THREE.DirectionalLight(0xffffff, 4.5); topLight.position.set(0, 2.8, 0.2); scene.add(topLight);
-    const frontLight = new THREE.DirectionalLight(0xffffff, 4.0); frontLight.position.set(0, 0.9, 3.0); scene.add(frontLight);
-    const leftLight = new THREE.DirectionalLight(0xffffff, 2.4); leftLight.position.set(-3.2, 0.5, 1.6); scene.add(leftLight);
-    const rightLight = new THREE.DirectionalLight(0xffffff, 2.4); rightLight.position.set(3.2, 0.5, 1.6); scene.add(rightLight);
-    const bottomLight = new THREE.DirectionalLight(0xffffff, 1.6); bottomLight.position.set(0, -2.8, 1.2); scene.add(bottomLight);
+    // Studio lighting (balanced, no harsh crush)
+    scene.add(new THREE.AmbientLight(0xffffff, 1.55));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 1.95));
+    const key = new THREE.DirectionalLight(0xffffff, 3.2); key.position.set(1.6, 2.2, 2.4); scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 2.2); fill.position.set(-2.2, 0.8, 2.2); scene.add(fill);
+    const rim  = new THREE.DirectionalLight(0xffffff, 1.6); rim.position.set(0.0, 1.9, -2.2); scene.add(rim);
 
-    // orbit (tiny) — start farther away ✅
+    // Orbit (simple) — start farther away
     const state = {
       target:new THREE.Vector3(0,0.02,0),
       yaw:0.35, pitch:-0.10,
-      dist:2.65,                 // ✅ farther by default
+      dist:2.85,
       dragging:false, lastX:0, lastY:0, pinchDist:0
     };
     function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
@@ -141,20 +140,10 @@
       state.pitch += dy*0.007;
       state.pitch = clamp(state.pitch, -1.2, 0.9);
     });
-    canvas.addEventListener('wheel', (e)=>{ e.preventDefault(); state.dist *= (e.deltaY>0)?1.06:0.94; state.dist = clamp(state.dist, 1.6, 6.0); }, {passive:false});
-    canvas.addEventListener('touchstart',(e)=>{ if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX; const dy=e.touches[0].clientY-e.touches[1].clientY; state.pinchDist=Math.sqrt(dx*dx+dy*dy); } },{passive:true});
-    canvas.addEventListener('touchmove',(e)=>{
-      if(e.touches.length===2){
-        const dx=e.touches[0].clientX-e.touches[1].clientX;
-        const dy=e.touches[0].clientY-e.touches[1].clientY;
-        const d=Math.sqrt(dx*dx+dy*dy);
-        const ratio=d/Math.max(1,state.pinchDist);
-        state.dist/=ratio; state.dist=clamp(state.dist,1.6,6.0); state.pinchDist=d;
-      }
-    },{passive:true});
-    ui.reset.onclick=()=>{ state.yaw=0.35; state.pitch=-0.10; state.dist=2.65; updateCamera(); };
+    canvas.addEventListener('wheel', (e)=>{ e.preventDefault(); state.dist *= (e.deltaY>0)?1.06:0.94; state.dist = clamp(state.dist, 1.8, 6.0); }, {passive:false});
+    ui.reset.onclick=()=>{ state.yaw=0.35; state.pitch=-0.10; state.dist=2.85; updateCamera(); };
 
-    // helpers
+    // ===== image helpers =====
     async function loadImageToCanvas(source) {
       const img = await new Promise((resolve, reject) => {
         const im = new Image();
@@ -193,7 +182,7 @@
       return t;
     }
 
-    // auto-height (same generator you already had)
+    // ===== auto height + auto mask (same logic) =====
     function makeAutoHeight(srcCanvas) {
       const c0 = scaleCanvasMax(srcCanvas, 2048);
       const w = c0.width, h = c0.height;
@@ -289,10 +278,9 @@
           const grain  = fbm(xx*8.0, yy*8.0);
 
           let v = 0.62*b + 0.22*e + 0.16*(detail - 0.5);
-          v += (grain - 0.5) * (0.10 + 0.20*(1.0 - sat));
+          v += (grain - 0.5) * (0.08 + 0.18*(1.0 - sat));
 
-          // make it pop a bit more (helps emboss read)
-          v = (v - 0.35) * 1.75 + 0.35;
+          v = (v - 0.35) * 1.55 + 0.35; // less aggressive than before
           v = Math.max(0, Math.min(1, v));
 
           const g = Math.round(v*255);
@@ -304,7 +292,6 @@
       return out;
     }
 
-    // auto-mask (same as before)
     function makeAutoMask(srcCanvas){
       const c0 = scaleCanvasMax(srcCanvas, 768);
       const w = c0.width, h = c0.height;
@@ -404,30 +391,24 @@
       return out;
     }
 
-    // shaders
+    // ===== shading constants =====
     const CORNER = 0.044;
 
-    // brightness (confirmed)
-    const STUDIO_GAMMA = 0.78;
-    const STUDIO_GAIN  = 1.45;
+    // Keep base readable (no crush/blowout)
+    const BASE_GAIN = 1.18;     // mild lift
+    const BASE_GAMMA = 0.92;    // keep midtones stable
 
-    // HOLO stronger + MUCH more reactive
-    const HOLO_INTENSITY = 2.80;
-    const HOLO_BAND_W    = 0.26;
-    const HOLO_WARP      = 0.22;
-    const HOLO_GRAIN     = 0.28;
-    const HOLO_SPEC      = 1.25;
+    // Emboss: normal-only, subtle, spec-driven (won't smear text)
+    const EMBOSS_N = 0.55;      // normal perturb strength
+    const EMBOSS_SPEC = 0.55;   // how much emboss affects spec only
 
-    // ✅ 1:1-ish tilt mapping:
-    // We use tilt angles in radians directly and scale phase accordingly.
-    const HOLO_TILT_PHASE = 6.50;   // bigger = bands shift more per tilt angle
-    const HOLO_PARALLAX   = 0.12;   // bigger = foil slides more with tilt (keep <= 0.18)
-
-    // ✅ Emboss / texture visibility
-    const EMBOSS_STRENGTH = 1.25;   // bigger = normal perturb stronger
-    const RELIEF_UV       = 0.018;  // bigger = more "relief" (parallax-y texture feel)
-
-    const HEIGHT_UV_SCALE = 1.0;
+    // Holo: reflection-based, no gliding, anchored to surface
+    const HOLO_STRENGTH = 1.35; // overall
+    const HOLO_SAT = 0.85;      // colorfulness
+    const HOLO_WAVY = 0.22;     // surface micro warping (anchored)
+    const HOLO_SPARKLE = 0.16;  // tiny grain
+    const HOLO_SPEC = 0.95;     // extra sparkle spec
+    const HOLO_MASK_PROTECT = 1.0; // subject protection (1 = on)
 
     const roundedRectGLSL = `
       float roundedMask(vec2 uv, float r){
@@ -451,7 +432,7 @@
       uUseMask:   { value: 1.0 },
       uCorner: { value: CORNER },
       uTime:   { value: 0.0 },
-      uLightDir: { value: new THREE.Vector3(0.3, 0.9, 0.5).normalize() }
+      uLightDir: { value: new THREE.Vector3(0.35, 0.85, 0.45).normalize() }
     };
 
     const cardVS = `
@@ -479,7 +460,6 @@
 
       uniform float uHasHeight;
       uniform float uHasMask;
-
       uniform float uUseHolo;
       uniform float uUseEmboss;
       uniform float uUseMask;
@@ -502,114 +482,114 @@
         vec2 u = f*f*(3.0 - 2.0*f);
         return mix(a, b, u.x) + (c - a)*u.y*(1.0 - u.x) + (d - b)*u.x*u.y;
       }
+
+      // energy-safe "screen" blend (prevents blowout vs add)
+      vec3 screenBlend(vec3 base, vec3 top, float a){
+        top = clamp(top, 0.0, 1.0);
+        vec3 scr = 1.0 - (1.0 - base) * (1.0 - top);
+        return mix(base, scr, clamp(a, 0.0, 1.0));
+      }
+
       vec3 rainbow(float t){
-        return clamp(vec3(
+        vec3 c = vec3(
           sin(6.2831*(t + 0.00))*0.5+0.5,
           sin(6.2831*(t + 0.33))*0.5+0.5,
           sin(6.2831*(t + 0.66))*0.5+0.5
-        ), 0.0, 1.0);
+        );
+        // soften saturation
+        float g = dot(c, vec3(0.3333));
+        return mix(vec3(g), c, ${HOLO_SAT.toFixed(3)});
       }
 
       void main(){
         float inside = roundedMask(vUv, uCorner);
         if(inside < 0.5) discard;
 
-        vec2 uvH = vUv * ${HEIGHT_UV_SCALE.toFixed(3)};
-        float h = 0.5;
-        if(uHasHeight > 0.5){
-          h = texture2D(uHeight, uvH).r;
-        }
+        // Base artwork: keep readable
+        vec3 base = texture2D(uFront, vUv).rgb;
+        base = pow(base, vec3(${BASE_GAMMA.toFixed(3)}));
+        base *= ${BASE_GAIN.toFixed(3)};
+        base = clamp(base, 0.0, 1.0);
 
-        // Height gradient (used for emboss + relief)
+        // Height + gradients (for emboss normals only)
+        float h = 0.5;
         vec2 grad = vec2(0.0);
         if(uHasHeight > 0.5){
-          // Use a slightly larger step so it shows on real images
-          vec2 e = vec2(1.0/512.0, 1.0/512.0);
+          h = texture2D(uHeight, vUv).r;
+          vec2 e = vec2(1.0/768.0, 1.0/768.0);
           float hc = h;
-          float hx = texture2D(uHeight, uvH + vec2(e.x, 0.0)).r;
-          float hy = texture2D(uHeight, uvH + vec2(0.0, e.y)).r;
+          float hx = texture2D(uHeight, vUv + vec2(e.x, 0.0)).r;
+          float hy = texture2D(uHeight, vUv + vec2(0.0, e.y)).r;
           grad = vec2(hx - hc, hy - hc);
         }
 
-        // ✅ relief: shift base sampling slightly so texture reads
-        vec2 uvRelief = vUv;
-        if(uHasHeight > 0.5 && uUseEmboss > 0.5){
-          uvRelief += (-grad) * ${RELIEF_UV.toFixed(4)};
-        }
-
-        vec3 base = texture2D(uFront, uvRelief).rgb;
-
-        // studio lift
-        base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
-        base *= ${STUDIO_GAIN.toFixed(4)};
-        base = clamp(base, 0.0, 1.0);
-
+        // Mask: 1 = Pokémon/foreground
         float m = 0.0;
         if(uHasMask > 0.5 && uUseMask > 0.5){
-          m = texture2D(uMask, vUv).r; // 1 = Pokémon/foreground
+          m = texture2D(uMask, vUv).r;
         }
 
         vec3 N = normalize(vN);
-        vec3 L = normalize(uLightDir);
         vec3 V = normalize(vV);
+        vec3 L = normalize(uLightDir);
 
-        // emboss: normal perturb from height gradient
+        // ✅ Emboss: subtle normal perturb ONLY (no UV shift)
         if(uUseEmboss > 0.5 && uHasHeight > 0.5){
-          N = normalize(N + vec3(-grad.x, -grad.y, 0.0) * ${EMBOSS_STRENGTH.toFixed(4)});
+          N = normalize(N + vec3(-grad.x, -grad.y, 0.0) * ${EMBOSS_N.toFixed(3)});
         }
 
-        float ndl = clamp(dot(N, L)*0.45 + 0.55, 0.0, 1.0);
-        base *= mix(0.98, 1.10, ndl);
+        // basic shading (gentle)
+        float ndl = clamp(dot(N, L), 0.0, 1.0);
+        vec3 lit = base * (0.60 + 0.55*ndl);
 
+        // specular (where emboss should show)
+        vec3 H = normalize(L + V);
+        float spec = pow(max(dot(N, H), 0.0), 80.0);
+        lit += vec3(spec) * (0.12 + ${EMBOSS_SPEC.toFixed(3)} * (uUseEmboss>0.5?1.0:0.0)) * 0.45;
+
+        // ✅ Holo: reflection-based (no gliding across UV)
         if(uUseHolo > 0.5){
-          float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.0);
-
-          // ✅ 1:1-ish tilt response
+          float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.2);
           vec3 R = reflect(-V, N);
-          float tiltX = atan(R.x, R.z); // radians
-          float tiltY = atan(R.y, R.z); // radians
-          float tiltMag = length(vec2(tiltX, tiltY)); // radians magnitude
 
-          // Parallax slide responds directly to tilt angles
-          vec2 uvP = vUv + vec2(tiltX, tiltY) * ${HOLO_PARALLAX.toFixed(4)};
+          // anchored micro-wavy structure based on UV (doesn't slide with tilt)
+          float w = noise(vUv*10.0 + vec2(0.0, uTime*0.02));
+          float w2 = noise(vUv*24.0 + vec2(uTime*0.015, 0.0));
+          float micro = (w - 0.5) * ${HOLO_WAVY.toFixed(3)} + (w2 - 0.5) * ${HOLO_WAVY.toFixed(3)} * 0.35;
 
-          // keep your wavy look
-          float w = noise(uvP*8.0 + vec2(uTime*0.05, -uTime*0.04));
-          float warp = (w - 0.5) * ${HOLO_WARP.toFixed(4)};
+          // hue depends on reflection direction (this is the "real" angle response)
+          float hue = atan(R.x, R.z) * 0.20 + atan(R.y, R.z) * 0.16 + micro;
 
-          // ✅ phase reacts strongly to real tilt angle
-          float phase = (uTime*0.22) + (tiltX*0.85 + tiltY*0.65) * ${HOLO_TILT_PHASE.toFixed(4)};
+          // sparkle grain (tiny, anchored)
+          float g = noise(vUv*320.0 + uTime*0.05);
+          float sparkle = (g - 0.5) * ${HOLO_SPARKLE.toFixed(3)};
 
-          float band = sin(((uvP.y + warp) * 10.0 + (uvP.x + warp) * 2.5) / max(0.001, ${HOLO_BAND_W.toFixed(4)}) + phase);
-          band = band * 0.5 + 0.5;
+          // protect subject from holo (mask = 1 on Pokémon)
+          float protect = 1.0;
+          if(uHasMask > 0.5 && uUseMask > 0.5){
+            protect = 1.0 - clamp(m * ${HOLO_MASK_PROTECT.toFixed(1)}, 0.0, 1.0);
+          }
 
-          // hue shifts with tilt too
-          float hueShift = (tiltX*0.25 + tiltY*0.18);
+          // holo amount depends on fresnel + angle to light (reflectance)
+          float rdl = clamp(dot(R, L)*0.5 + 0.5, 0.0, 1.0);
+          float holoAmt = ${HOLO_STRENGTH.toFixed(3)} * (0.10 + 0.85*fres) * (0.35 + 0.65*rdl) * protect;
 
-          float g = noise(uvP*240.0 + uTime*0.18);
+          vec3 holoCol = rainbow(hue + sparkle);
 
-          float heightMod = 0.70 + (h - 0.5) * 1.35;
-          float maskMod = 1.0 - clamp(m*1.15, 0.0, 1.0);
+          // energy-safe blend so highlights don't blow out
+          lit = screenBlend(lit, holoCol, holoAmt);
 
-          vec3 holoCol = rainbow(band*0.65 + w*0.30 + fres*0.22 + hueShift);
-          holoCol += (g - 0.5) * ${HOLO_GRAIN.toFixed(4)};
-
-          vec3 H = normalize(L + V);
-          float spec = pow(max(dot(N, H), 0.0), 60.0) * ${HOLO_SPEC.toFixed(4)};
-
-          float holoAmt = ${HOLO_INTENSITY.toFixed(4)} * (0.14 + 0.72*fres) * clamp(heightMod, 0.0, 1.7);
-          holoAmt *= maskMod;
-
-          // extra boost tied to tilt magnitude (more tilt = more dramatic foil)
-          float tiltBoost = 1.0 + clamp(tiltMag * 1.25, 0.0, 1.7);
-
-          base += holoCol * holoAmt * tiltBoost;
-          base += vec3(spec) * (0.20 + 0.78*fres) * maskMod * tiltBoost;
-
-          base = clamp(base, 0.0, 1.0);
+          // a bit of extra sparkle spec, still protected
+          float spec2 = pow(max(dot(R, L), 0.0), 18.0) * ${HOLO_SPEC.toFixed(3)} * protect;
+          lit += vec3(spec2) * (0.08 + 0.55*fres);
         }
 
-        gl_FragColor = vec4(base, 1.0);
+        // final gentle compression to avoid harsh contrast
+        lit = clamp(lit, 0.0, 1.0);
+        lit = lit / (lit + vec3(0.18)); // soft roll-off (Reinhard-ish)
+        lit = clamp(lit, 0.0, 1.0);
+
+        gl_FragColor = vec4(lit, 1.0);
       }
     `;
 
@@ -623,9 +603,10 @@
         float inside = roundedMask(vUv, uCorner);
         if(inside < 0.5) discard;
         vec3 base = texture2D(uBack, vUv).rgb;
-        base = pow(base, vec3(${STUDIO_GAMMA.toFixed(4)}));
-        base *= ${STUDIO_GAIN.toFixed(4)};
+        base = pow(base, vec3(${BASE_GAMMA.toFixed(3)}));
+        base *= ${BASE_GAIN.toFixed(3)};
         base = clamp(base, 0.0, 1.0);
+        base = base / (base + vec3(0.18));
         gl_FragColor = vec4(base, 1.0);
       }
     `;
@@ -642,7 +623,10 @@
       fragmentShader: backFS
     });
 
-    // meshes
+    // mesh
+    const CORNER_UV = 0.044;
+    uniforms.uCorner.value = CORNER_UV;
+
     const W=1.0, H=W*(88/63);
     const geo = new THREE.PlaneGeometry(W, H, 1, 1);
     const group = new THREE.Group();
